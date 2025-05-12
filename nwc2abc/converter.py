@@ -1,11 +1,14 @@
-
-# Full v3 converter code goes here
+# converter.py
 import subprocess
 import tempfile
 import os
+import sys
 import requests
 import music21
 from fractions import Fraction
+
+def log(msg):
+    print(msg, file=sys.stdout, flush=True)
 
 def pitch_to_abc(m21_pitch):
     name = m21_pitch.step
@@ -38,7 +41,8 @@ def get_abc_barline(m21_barline):
 
 def musicxml_to_simplified_abc(musicxml_filepath, default_L_denom=8, simplicity_level='raw'):
     score = music21.converter.parse(musicxml_filepath)
-    abc_output = [f"X: {score.metadata.title or 'Untitled'}"]
+    title = score.metadata.title.strip() if score.metadata and score.metadata.title else "Untitled"
+    abc_output = [f"X: {title}"]
     if score.metadata and score.metadata.composer:
         abc_output.append(f"C: {score.metadata.composer}")
     ts = score.flat.getElementsByClass('TimeSignature')
@@ -97,11 +101,22 @@ def musicxml_to_simplified_abc(musicxml_filepath, default_L_denom=8, simplicity_
         abc_output.append(part_str.strip())
     return "\n".join(abc_output)
 
-def nwc_to_musicxml_jar(nwc_filepath, jar_path, output_musicxml_filepath=None):
+def nwc_to_musicxml_jar(nwc_filepath, script_path='./jar/nwc2xml.sh', output_musicxml_filepath=None):
+    """
+    Wrapper for shell script (nwc2xml.sh).
+    """
     if output_musicxml_filepath is None:
         fd, output_musicxml_filepath = tempfile.mkstemp(suffix='.musicxml')
         os.close(fd)
-    subprocess.run(['java', '-jar', jar_path, nwc_filepath], check=True, stdout=open(output_musicxml_filepath, 'wb'), stderr=subprocess.PIPE)
+
+    log(f"[INFO] Running script: {script_path} {nwc_filepath} {output_musicxml_filepath}")
+    try:
+        subprocess.run([script_path, nwc_filepath, output_musicxml_filepath], check=True, text=True)
+        log(f"[INFO] Script completed, MusicXML file: {output_musicxml_filepath}")
+    except subprocess.CalledProcessError as e:
+        log(f"[ERROR] Script failed with return code {e.returncode}")
+        raise
+
     return output_musicxml_filepath
 
 def nwc_to_musicxml_service(nwc_filepath, service_url='https://nwc2musicxml.appspot.com/'):
@@ -114,15 +129,35 @@ def nwc_to_musicxml_service(nwc_filepath, service_url='https://nwc2musicxml.apps
         o.write(resp.content)
     return tmp
 
-def nwc_to_simplified_abc(nwc_filepath, method='jar', jar_path='./nwc2musicxml.jar', service_url='https://nwc2musicxml.appspot.com/', default_L_denom=8, simplicity_level='raw'):
+def nwc_to_simplified_abc(
+        nwc_filepath,
+        method='jar',
+        script_path='./jar/nwc2xml.sh',   # <-- FIX
+        service_url='https://nwc2musicxml.appspot.com/',
+        default_L_denom=8,
+        simplicity_level='raw'):
+        
+    log(f"[INFO] Starting NWC to ABC conversion: file={nwc_filepath}, method={method}, level={simplicity_level}")
+    
     if method == 'jar':
-        xml_path = nwc_to_musicxml_jar(nwc_filepath, jar_path)
+        log(f"[INFO] Converting NWC → MusicXML using script: {script_path}")
+        xml_path = nwc_to_musicxml_jar(nwc_filepath, script_path)
     elif method == 'service':
+        log(f"[INFO] Converting NWC → MusicXML using online service: {service_url}")
         xml_path = nwc_to_musicxml_service(nwc_filepath, service_url)
     else:
         raise ValueError("method must be 'jar' or 'service'")
+
+    log(f"[INFO] MusicXML file created at: {xml_path}")
+    
     try:
-        return musicxml_to_simplified_abc(xml_path, default_L_denom, simplicity_level)
+        abc = musicxml_to_simplified_abc(xml_path, default_L_denom, simplicity_level)
+        log(f"[INFO] ABC conversion completed successfully.")
+        return abc
+    except Exception as e:
+        log(f"[ERROR] ABC conversion failed: {e}")
+        raise
     finally:
         if method == 'service' and os.path.exists(xml_path):
             os.remove(xml_path)
+            log(f"[INFO] Temporary MusicXML file removed: {xml_path}")

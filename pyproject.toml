@@ -18,3 +18,4 @@ dependencies = [
 
 [project.scripts]
 nwc2abc-cli = "nwc2abc.cli:main"
+nwc2abc = "nwc2abc.cli:main"
