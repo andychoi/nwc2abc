@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nwc2abc"
+version = "1.0.0"
+description = "Convert Noteworthy Composer (NWCtxt) to ABC notation for GenAI and analysis"
+authors = [{ name = "Your Name", email = "your.email@example.com" }]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "music21>=8.1",
+    "requests>=2.31",
+    "matplotlib<3.10"
+]
+
+[project.scripts]
+nwc2abc-cli = "nwc2abc.cli:main"
