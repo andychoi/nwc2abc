@@ -161,3 +161,21 @@ def nwc_to_simplified_abc(
         if method == 'service' and os.path.exists(xml_path):
             os.remove(xml_path)
             log(f"[INFO] Temporary MusicXML file removed: {xml_path}")
+
+def simplified_abc_to_musicxml(abc_string, output_filepath=None):
+    """
+    Convert simplified ABC string to MusicXML using music21.
+    """
+    log(f"[INFO] Starting simplified ABC to MusicXML conversion")
+    # Ensure minimal ABC header (music21 requires at least X, M, K)
+    if not abc_string.startswith("X:"):
+        abc_string = f"X:1\nM:4/4\nK:C\n{abc_string}"
+
+    # Parse ABC to music21 stream
+    score = music21.converter.parse(abc_string, format='abc')
+
+    if output_filepath:
+        score.write('musicxml', fp=output_filepath)
+        return output_filepath
+    else:
+        return score.write('musicxml')
