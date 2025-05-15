@@ -6,6 +6,7 @@ import sys
 import requests
 import music21
 from fractions import Fraction
+from pathlib import Path
 
 def log(msg):
     print(msg, file=sys.stdout, flush=True)
@@ -179,3 +180,80 @@ def simplified_abc_to_musicxml(abc_string, output_filepath=None):
         return output_filepath
     else:
         return score.write('musicxml')
+
+
+def abc_to_nwc(abc_string: str, output_filepath: str = None) -> str:
+    """
+    Convert multi-voice ABC notation into a valid NoteWorthy Composer
+    ASCII (.nwctxt) file, with separate Staff blocks, voice names,
+    clefs, key & meter.  Ready for import into NWC 2.75+.
+    """
+    log("[INFO] Starting ABC → NWCtxt conversion")
+
+    # 1) Ensure minimal header:
+    if not abc_string.startswith("X:"):
+        abc_string = "X:1\nM:4/4\nK:C\n" + abc_string
+
+    # 2) Parse into a Score with parts (voices):
+    score = music21.converter.parse(abc_string, format='abc')
+
+    # 3) Grab global metadata:
+    title    = (score.metadata.title    or "Untitled").replace(":", "") 
+    composer = (score.metadata.composer or "").replace(":", "")
+    ts_elems = score.flat.getElementsByClass(music21.meter.TimeSignature)
+    ks_elems = score.flat.getElementsByClass(music21.key.KeySignature)
+    ts_str   = ts_elems[0].ratioString if ts_elems else "4/4"
+    key_obj  = ks_elems[0] if ks_elems else None
+    key_str  = key_obj.sharps if key_obj else 0
+
+    # 4) Build the .nwctxt lines
+    lines = []
+    lines.append("!NoteWorthyComposer(2.75)")
+    lines.append("!Info")
+    lines.append(f"!SongInfo Title={title}")
+    if composer:
+        lines.append(f"!SongInfo Composer={composer}")
+    lines.append(f"!Meter {ts_str}")
+    lines.append(f"!KeySharps {key_str}")
+    lines.append("")          # blank line before the Staff blocks
+
+    # 5) One [Staff] block per part:
+    for idx, part in enumerate(score.parts, start=1):
+        part_name = part.partName or f"Voice{idx}"
+
+        # Clef
+        clefs = part.getElementsByClass(music21.clef.Clef)
+        clef_name = (clefs[0].sign + str(clefs[0].octaveChange or "")).lower() if clefs else "g2"
+
+        lines.append(f"[Staff {idx}]")
+        lines.append(f"!VoiceName {part_name}")
+        lines.append(f"!Clef {clef_name}")
+        lines.append("")   # blank before the notes
+
+        # Now emit each measure’s notes inline, using NWC barlines '|'
+        for measure in part.getElementsByClass(music21.stream.Measure):
+            tokens = []
+            for el in measure.notesAndRests:
+                dur = el.duration.quarterLength
+                if isinstance(el, music21.note.Note):
+                    tokens.append(f"{el.pitch.nameWithOctave}/{dur}")
+                elif isinstance(el, music21.chord.Chord):
+                    pcs = ".".join(p.nameWithOctave for p in el.pitches)
+                    tokens.append(f"[{pcs}]/{dur}")
+                else:  # Rest
+                    tokens.append(f"R/{dur}")
+            # join tokens, prepend barline
+            lines.append("| " + " ".join(tokens))
+
+        lines.append("[EndStaff]")
+        lines.append("")   # blank line between staves
+
+    nwc_text = "\n".join(lines)
+
+    # 6) Write or return
+    if output_filepath:
+        Path(output_filepath).write_text(nwc_text, encoding="utf-8")
+        log(f"[INFO] NWCtxt written to {output_filepath}")
+        return output_filepath
+    else:
+        return nwc_text

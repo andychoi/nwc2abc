@@ -2,6 +2,8 @@
 
 Convert Noteworthy Composer (NWCtxt) files to ABC notation (optimized for GenAI experiments).
 
+- ABC Transcription Tools: https://michaeleskin.com/abctools/abctools.html
+
 ## Features
 - Converts NWC via musescore/nwc2musicxml
 - Outputs ABC at 3 levels (`raw`, `medium`, `simple`)
