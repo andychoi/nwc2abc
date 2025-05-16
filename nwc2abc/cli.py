@@ -5,6 +5,23 @@ nwc2abc-cli nwc2abc myscore.nwc.txt -o myscore.abc
 nwc2abc-cli abc2musicxml myscore.abc -o myscore.musicxml
 nwc2abc-cli abc2nwc myscore.abc -o myscore.nwc.txt
 
+For AI prompt:
+
+1. Introduce passing and neighbor tones in inner voices (especially Alto and Tenor).
+2. Vary the rhythmic patterns slightly between voices to avoid total block-chord movement.
+3. Use suspensions and anticipations to add harmonic interest.
+4. Widen the harmonic palette: Add some secondary dominants or inverted chords.
+5. Clarify functional harmony: Use cadential formulas, and avoid monotony by varying bass patterns.
+
+ 
+delivered in manageable chunks?
+With or without inline explanation comments?
+Any specific style or era reference? (e.g., baroque chorale style, romantic part writing, modern close harmony, etc.)
+
+full improved SATB abc file + like my input, not in chunks + without comments + baroque style (or your preferred combo).
+
+TEST: ABC Transcription Tools: https://michaeleskin.com/abctools/abctools.html
+
 """
 import argparse
 from pathlib import Path
