@@ -83,7 +83,7 @@ def analyze_combined(filepath):
                                      .append(f"doubled in {ino.getContextByClass('Part').partName}")
 
     # 4) Emit report
-    render_html_report(issues_by_measure, part_names, "combined_report.html")
+    render_html_report(issues_by_measure, part_names, "report/combined_report.html")
     print("Combined analysis complete → combined_report.html")
 
 ```
@@ -258,6 +258,31 @@ def analyze_vocal(filepath):
 
 ```
 
+## `common/abc_utils.py`
+```python
+# common/abc_utils.py
+
+from music21 import pitch
+
+def pitch_to_abc(m21_pitch):
+    """
+    Convert a music21.pitch.Pitch into ABC pitch notation (with octave marks).
+    """
+    step = m21_pitch.step
+    octave = m21_pitch.octave
+    acc_token = ""
+    if m21_pitch.accidental:
+        acc_map = {"sharp": "^", "flat": "_", "natural": "="}
+        acc_token = acc_map.get(m21_pitch.accidental.name, "")
+    # ABC uses lowercase for octave ≥5
+    if octave >= 5:
+        note = step.lower() + "'" * (octave - 5)
+    else:
+        note = step.upper() + "," * max(0, 4 - octave)
+    return acc_token + note
+
+```
+
 ## `common/harmony_utils.py`
 ```python
 from music21 import analysis, chord, key as key_module
@@ -287,6 +312,14 @@ def analyze_chord_progression(chords, key):
 
 ## `common/html_report.py`
 ```python
+# common/html_report.py
+
+from common.abc_utils import pitch_to_abc
+from music21 import pitch as m21pitch, key as m21key
+
+# You can change this to whatever key the piece is in:
+default_key = m21key.Key('C')
+
 html_template = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -299,7 +332,9 @@ html_template = """<!DOCTYPE html>
         .dissonance {{ background-color: #fdecea; color: #b94a48; }}
         .doubling {{ background-color: #d1ecf1; color: #0c5460; }}
         th, td {{ text-align: center; vertical-align: middle; }}
-        .badge {{ font-size: 0.85em; }}
+        .note-issue {{ margin-bottom: 0.5em; }}
+        .note-issue b {{ display: block; }}
+        .note-issue small {{ font-style: italic; }}
     </style>
 </head>
 <body class="container my-4">
@@ -308,9 +343,7 @@ html_template = """<!DOCTYPE html>
         <thead class="table-light">
             <tr>
                 <th>Measure</th>
-                <th>Part</th>
-                <th>Issue</th>
-                <th>Type</th>
+                {columns}
             </tr>
         </thead>
         <tbody>
@@ -322,25 +355,91 @@ html_template = """<!DOCTYPE html>
 """
 
 def classify_issue(issue_text):
-    if "dissonance" in issue_text.lower():
+    it = issue_text.lower()
+    if "dissonance" in it:
         return "dissonance"
-    elif "parallel" in issue_text or "crossing" in issue_text or "spacing" in issue_text:
-        return "voicing"
-    elif "doubled" in issue_text:
+    if "doubled" in it:
         return "doubling"
     return "voicing"
 
-def render_html_report(issues_by_measure, part_names, output_path):
-    rows_html = ''
-    for m in sorted(issues_by_measure.keys()):
-        for part in issues_by_measure[m]:
-            for issue in issues_by_measure[m][part]:
-                issue_type = classify_issue(issue)
-                css_class = issue_type if issue_type in {"voicing", "dissonance", "doubling"} else "voicing"
-                badge = f'<span class="badge text-bg-secondary">{issue_type}</span>'
-                rows_html += f'<tr class="{css_class}"><td>{m}</td><td>{part}</td><td>{issue}</td><td>{badge}</td></tr>\n'
+def recommend_fix(issue_text):
+    it = issue_text.lower()
+    # 1) Dissonance resolution – pick nearest diatonic step in default_key
+    if "dissonance with " in it:
+        target = issue_text.split("dissonance with ")[1]
+        p = m21pitch.Pitch(target)
+        abc_orig = pitch_to_abc(p)
+        # build diatonic candidates for same octave
+        candidates = []
+        for deg in range(1, 8):
+            sp = default_key.pitchFromDegree(deg)
+            sp.octave = p.octave
+            candidates.append(sp)
+        # sort by proximity
+        candidates.sort(key=lambda sp: abs(sp.midi - p.midi))
+        # avoid the same note
+        best = candidates[1] if candidates and candidates[0].midi == p.midi else candidates[0]
+        abc_res = pitch_to_abc(best)
+        mode = '' if default_key.mode=='major' else 'm'
+        return (f"Resolve dissonance: change {abc_orig} → {abc_res} "
+                f"({default_key.tonic.name}{mode} scale)")
 
-    html = html_template.format(rows=rows_html)
+    # 2) Spacing
+    if "spacing" in it:
+        return "Reduce to within an octave: e.g., lower upper voice by 8ve (ABC: A→a)."
+
+    # 3) Crossing
+    if "crossing" in it:
+        return "Maintain voice order: transpose the lower voice down (e.g., ABC: A,)."
+
+    # 4) Parallel fifth
+    if "parallel p5" in it:
+        return "Break parallel 5th: insert passing tone in one voice (e.g., z in ABC)."
+
+    # 5) Parallel octave
+    if "parallel p8" in it:
+        return "Avoid parallel 8ve: use contrary motion (e.g., step in ABC: c d c)."
+
+    # 6) Doubling
+    if "doubled in " in it:
+        part = issue_text.split("doubled in ")[1]
+        return (f"Drop duplication in {part} or vary voicing—"
+                f"e.g., use ABC chord [CE] instead of [CC].")
+
+    # 7) Progression
+    if "prog" in it:
+        tonic = pitch_to_abc(default_key.tonic)
+        dominant = pitch_to_abc(default_key.pitchFromDegree(5))
+        return (f"V→I in ABC: {dominant} {dominant} {dominant}| {tonic} {tonic} {tonic}")
+
+    return "Review harmonic context."
+
+def render_html_report(issues_by_measure, part_names, output_path):
+    # Build table header
+    columns_html = ''.join(f'<th>{part}</th>' for part in part_names)
+
+    rows = []
+    for m in sorted(issues_by_measure.keys()):
+        cells = [f'<td>{m}</td>']
+        for part in part_names:
+            issues = issues_by_measure.get(m, {}).get(part, [])
+            if not issues:
+                cells.append('<td class="ok">✓</td>')
+            else:
+                cell_html = []
+                for issue in issues:
+                    css = classify_issue(issue)
+                    fix = recommend_fix(issue)
+                    cell_html.append(
+                        f'<div class="note-issue {css}">'
+                        f'<b>{issue}</b>'
+                        f'<small>{fix}</small>'
+                        f'</div>'
+                    )
+                cells.append(f'<td>{"".join(cell_html)}</td>')
+        rows.append('<tr>' + ''.join(cells) + '</tr>')
+
+    html = html_template.format(columns=columns_html, rows="\n".join(rows))
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html)
 
@@ -366,6 +465,113 @@ def classify_parts(score):
 
 ```
 
+## `common/style_advisor.py`
+```python
+from music21 import interval, note, chord, key as m21key
+from common.abc_utils import pitch_to_abc
+from common.part_utils import classify_parts
+from common.harmony_utils import get_chords, detect_key
+
+def voice_motion_metrics(vocal_parts):
+    """
+    Compute relative percentages of motion types between adjacent vocal voices.
+    """
+    counts = {'parallel': 0, 'contrary': 0, 'oblique': 0, 'similar': 0}
+    total = 0
+    for vp1, vp2 in zip(vocal_parts[:-1], vocal_parts[1:]):
+        n1s = [n for n in vp1.recurse().notes if isinstance(n, note.Note)]
+        n2s = [n for n in vp2.recurse().notes if isinstance(n, note.Note)]
+        for a, b in zip(n1s, n2s):
+            # find next notes
+            idx1, idx2 = n1s.index(a), n2s.index(b)
+            if idx1+1 < len(n1s) and idx2+1 < len(n2s):
+                na, nb = n1s[idx1+1], n2s[idx2+1]
+                iv1 = interval.Interval(a, b).semitones
+                iv2 = interval.Interval(na, nb).semitones
+                # parallel perfect 5th or octave
+                if iv1 == iv2 and abs(iv1) in (7, 12):
+                    counts['parallel'] += 1
+                # contrary if voices move in opposite directions
+                elif (na.pitch.midi - a.pitch.midi)*(nb.pitch.midi - b.pitch.midi) < 0:
+                    counts['contrary'] += 1
+                # oblique if one voice stationary
+                elif a.pitch.midi == na.pitch.midi or b.pitch.midi == nb.pitch.midi:
+                    counts['oblique'] += 1
+                else:
+                    counts['similar'] += 1
+                total += 1
+    if total == 0:
+        return {k: 0.0 for k in counts}
+    return {k: counts[k]/total for k in counts}
+
+def density_advice(score, threshold=4.0):
+    """
+    Flag measures where average notes per voice exceeds threshold.
+    """
+    advice = []
+    parts = score.parts
+    max_m = max(m.measureNumber for m in parts[0].getElementsByClass('Measure'))
+    for m in range(1, max_m+1):
+        count = 0
+        for p in parts:
+            meas = p.measure(m)
+            count += len([n for n in meas.notes if isinstance(n, note.Note)])
+        avg = count/len(parts)
+        if avg > threshold:
+            advice.append(f"Measure {m}: dense texture ({avg:.1f} notes/voice)")
+    return advice
+
+def syncopation_advice(score):
+    """
+    Suggest adding syncopation when all voices align on downbeats.
+    """
+    advice = []
+    for p in score.parts:
+        for m in p.getElementsByClass('Measure'):
+            notes = [n for n in m.notes if isinstance(n, note.Note)]
+            if notes and all(n.offset % 1 == 0 for n in notes):
+                advice.append(f"{p.partName}: consider syncopation in measure {m.measureNumber}")
+    return advice
+
+def reharmonization_advice(score):
+    """
+    Propose secondary dominants for each diatonic chord.
+    """
+    advice = []
+    key = detect_key(score)
+    chords = get_chords(score)
+    for c in chords:
+        try:
+            rn = m21key.roman.RomanNumeral(c, key)
+            if rn.degree not in (5,):
+                sec = key.pitchFromDegree(5).transpose((rn.degree-1)*7)  # V of that degree
+                advice.append(
+                    f"At offset {c.offset:.1f}: try secondary dominant {pitch_to_abc(sec)} for {rn.figure}"
+                )
+        except:
+            continue
+    return advice
+
+def style_advice(score):
+    """
+    Collate all style recommendations into a list of strings.
+    """
+    advice = []
+    # 1) Voice-leading balance
+    vocals, _ = classify_parts(score)
+    vm = voice_motion_metrics(vocals)
+    if vm['contrary'] < 0.3:
+        advice.append("Low contrary motion (<30%)—consider more independent lines.")
+    # 2) Texture density
+    advice += density_advice(score)
+    # 3) Rhythm variety
+    advice += syncopation_advice(score)
+    # 4) Reharmonization
+    advice += reharmonization_advice(score)
+    return advice
+
+```
+
 ## `run_analysis.py`
 ```python
 # musicxml/run_analysis.py
@@ -376,6 +582,8 @@ import subprocess
 from analyze_vocal_score import analyze_vocal
 from analyze_instrumental_score import analyze_instrumental
 from analyze_combined_score import analyze_combined
+from common.style_advisor import style_advice
+from music21 import converter
 
 def nwc_to_musicxml_jar(nwc_filepath, script_path='./jar/nwc2xml.sh', output_musicxml_filepath=None):
     """Wrapper for local shell script conversion to MusicXML."""
@@ -409,6 +617,21 @@ if __name__ == "__main__":
         analyze_instrumental(musicxml_path)
     elif mode == "combined":
         score = analyze_combined(musicxml_path)
+    elif mode == "style":
+        score = converter.parse(musicxml_path)
+        advice = style_advice(score)
+        # write both console and an HTML report
+        from common.html_report import render_html_report
+
+        # Console
+        # print("\n=== Style Advisor Recommendations ===")
+        # for line in advice:
+        #     print(f"- {line}")
+
+        # HTML
+        report_path = "report/style_report.html"
+        render_html_report(advice, report_path)
+        print(f"Style report written to {report_path}")   
     else:
         print("Unknown mode. Use 'vocal', 'instrumental', or 'combined'")
 ```

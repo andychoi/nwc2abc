@@ -128,3 +128,11 @@ def render_html_report(issues_by_measure, part_names, output_path):
     html = html_template.format(columns=columns_html, rows="\n".join(rows))
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html)
+
+def render_style_report(issues_by_measure, part_names, output_path):
+    """
+    Generate a column-per-staff style report exactly like the harmony table.
+    `issues_by_measure` should map measure → part → list of style issues.
+    """
+    # Reuse the same html_template and rendering logic:
+    render_html_report(issues_by_measure, part_names, output_path)

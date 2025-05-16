@@ -6,6 +6,8 @@ import subprocess
 from analyze_vocal_score import analyze_vocal
 from analyze_instrumental_score import analyze_instrumental
 from analyze_combined_score import analyze_combined
+from common.style_advisor import style_advice
+from music21 import converter
 
 def nwc_to_musicxml_jar(nwc_filepath, script_path='./jar/nwc2xml.sh', output_musicxml_filepath=None):
     """Wrapper for local shell script conversion to MusicXML."""
@@ -39,5 +41,8 @@ if __name__ == "__main__":
         analyze_instrumental(musicxml_path)
     elif mode == "combined":
         score = analyze_combined(musicxml_path)
+    elif mode == "style":
+        from analyze_style_score import analyze_style
+        analyze_style(musicxml_path)
     else:
         print("Unknown mode. Use 'vocal', 'instrumental', or 'combined'")
