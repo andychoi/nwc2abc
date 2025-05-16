@@ -158,7 +158,7 @@ def analyze_instrumental(filepath):
         if part_names:
             issues_by_measure.setdefault(m, {}).setdefault(part_names[0], []).append("prog")
 
-    render_html_report(issues_by_measure, part_names, "instrumental_report.html")
+    render_html_report(issues_by_measure, part_names, "report/instrumental_report.html")
     print("Instrumental harmony analysis complete. Output: instrumental_report.html")
 
 ```
@@ -253,7 +253,7 @@ def analyze_vocal(filepath):
         m = int(offset)
         issues_by_measure.setdefault(m, {}).setdefault("Soprano", []).append("prog")
 
-    render_html_report(issues_by_measure, voice_labels, "vocal_report.html")
+    render_html_report(issues_by_measure, voice_labels, "report/vocal_report.html")
     print("Vocal harmony analysis complete. Output: vocal_report.html")
 
 ```

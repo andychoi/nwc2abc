@@ -79,5 +79,5 @@ def analyze_combined(filepath):
                                      .append(f"doubled in {ino.getContextByClass('Part').partName}")
 
     # 4) Emit report
-    render_html_report(issues_by_measure, part_names, "combined_report.html")
+    render_html_report(issues_by_measure, part_names, "report/combined_report.html")
     print("Combined analysis complete → combined_report.html")

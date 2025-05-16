@@ -86,5 +86,5 @@ def analyze_vocal(filepath):
         m = int(offset)
         issues_by_measure.setdefault(m, {}).setdefault("Soprano", []).append("prog")
 
-    render_html_report(issues_by_measure, voice_labels, "vocal_report.html")
+    render_html_report(issues_by_measure, voice_labels, "report/vocal_report.html")
     print("Vocal harmony analysis complete. Output: vocal_report.html")
