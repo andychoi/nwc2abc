@@ -12,120 +12,165 @@ from pathlib import Path
 def log(msg: str):
     print(msg, file=sys.stdout, flush=True)
 
-def pitch_to_abc(m21_pitch: music21.pitch.Pitch) -> str:
-    """Convert a music21 Pitch into ABC pitch notation (with octave marks)."""
+def pitch_to_abc(m21_pitch: music21.pitch.Pitch, key_sig: music21.key.Key = None) -> str:
+    """Convert a music21 Pitch into ABC pitch notation (with octave marks), omitting accidentals implied by the key."""
     step = m21_pitch.step
     octave = m21_pitch.octave
-    acc = ""
+    acc_token = ""
+
     if m21_pitch.accidental:
-        name = m21_pitch.accidental.name
-        acc = {"sharp":"^", "flat":"_", "natural":"="}.get(name, "")
+        show_acc = True
+        if key_sig:
+            ks_acc = key_sig.accidentalByStep(step)
+            if ks_acc and ks_acc.name == m21_pitch.accidental.name:
+                show_acc = False
+        if show_acc:
+            acc_map = {"sharp": "^", "flat": "_", "natural": "="}
+            acc_token = acc_map.get(m21_pitch.accidental.name, "")
+
     if octave >= 5:
         note = step.lower() + "'" * (octave - 5)
     else:
         note = step.upper() + "," * max(0, 4 - octave)
-    return acc + note
 
-def duration_to_abc(m21_duration: music21.duration.Duration, L_unit_quarter_length: float) -> str:
-    """Convert a music21 Duration to an ABC duration token."""
-    frac = Fraction(m21_duration.quarterLength).limit_denominator(32)
-    val = frac / Fraction(L_unit_quarter_length)
-    if val == 1:
-        return ""
-    if val < 1:
-        return f"/{int(1/val)}"
-    if val.denominator == 1:
-        return str(val.numerator)
-    return f"{val.numerator}/{val.denominator}"
+    return acc_token + note
+
 
 def musicxml_to_simplified_abc(
     musicxml_filepath: str,
     default_L_denom: int = 8,
     simplicity_level: str = "raw"
 ) -> str:
-    """
-    Convert a multi-part MusicXML file into fully-featured ABC:
-     - Global X, T, C, M, L, K headers
-     - One V: definition per voice (with name & clef)
-     - Then each voice’s measures under its V: block
-     - Groups 4 bars per line for readability
-    """
+    from music21 import note, chord, stream, clef, meter, key, tempo, metadata
+
     score = music21.converter.parse(musicxml_filepath)
-    meta = score.metadata or music21.metadata.Metadata()
-    title    = meta.title.strip()    if meta.title else "Untitled"
+    meta = score.metadata or metadata.Metadata()
+    title = meta.title.strip() if meta.title else "Untitled"
     composer = meta.composer.strip() if meta.composer else ""
 
-    # Time signature & Key signature
-    ts = score.flat.getElementsByClass(music21.meter.TimeSignature)
-    ks = score.flat.getElementsByClass(music21.key.KeySignature)
-    meter = ts[0].ratioString if ts else "4/4"
-    if ks:
-        keyobj = ks[0].asKey()
-        kname = keyobj.tonic.name.replace('-', 'b')
-        if keyobj.mode == 'minor':
-            kname += "m"
-    else:
-        kname = "C"
+    # Time and key signatures
+    ts = score.flat.getElementsByClass(meter.TimeSignature)
+    ks = score.flat.getElementsByClass(key.KeySignature)
+    meter_str = ts[0].ratioString if ts else "4/4"
+    key_obj = ks[0].asKey() if ks else key.Key("C")
+    kname = key_obj.tonic.name.replace("-", "b")
+    if key_obj.mode == "minor":
+        kname += "m"
 
-    # Prepare L unit
+    # L unit
     L_unit_ql = 4.0 / default_L_denom
 
-    # Header lines
     abc_lines = [
         "X: 1",
         f"T: {title}",
         f"C: {composer}" if composer else None,
-        f"M: {meter}",
-        f"L: 1/{default_L_denom}",
-        f"K: {kname}"
+        f"M: {meter_str}",
+        f"L: 1/{default_L_denom}"
     ]
+
+    # Tempo
+    tempos = score.flat.getElementsByClass(tempo.MetronomeMark)
+    if tempos:
+        bpm = tempos[0].number or 120
+        beat_unit = tempos[0].referent.quarterLength if tempos[0].referent else 1.0
+        if beat_unit == 1.0:
+            beat_note = "1/4"
+        elif beat_unit == 0.5:
+            beat_note = "1/8"
+        elif beat_unit == 2.0:
+            beat_note = "1/2"
+        else:
+            beat_note = str(beat_unit)
+        abc_lines.append(f"Q: {beat_note}={int(bpm)}")
+
+    abc_lines.append(f"K: {kname}")
     abc_lines = [line for line in abc_lines if line]
 
-    # Collect voices: (voice_id, partName, clef, part_stream)
+    # Collect voices
     voices = []
-    for part in score.parts:
-        pname = part.partName or part.id or f"Voice{len(voices)+1}"
-        vid = str(pname).strip()[0].upper()
-        if vid not in ("S","A","T","B"):
-            vid = f"V{len(voices)+1}"
-        # detect clef
-        clefs = part.getElementsByClass(music21.clef.Clef)
-        if clefs:
-            sign = clefs[0].sign.lower()
-            octch = clefs[0].octaveChange or 0
-            clef_name = sign + (str(octch) if octch else "")
-        else:
-            clef_name = "treble"
-        voices.append((vid, pname, clef_name, part))
+    for idx, part in enumerate(score.parts):
+        pname = part.partName or part.id or f"Voice{idx+1}"
+        vid = f"V{idx+1}"
 
-    # Voice definitions
+        # Clef detection from first measure
+        measures = list(part.recurse().getElementsByClass(stream.Measure))
+        clef_obj = None
+        if measures and measures[0].clef:
+            clef_obj = measures[0].clef
+        else:
+            clefs_found = list(measures[0].recurse().getElementsByClass(clef.Clef)) if measures else []
+            clef_obj = clefs_found[0] if clefs_found else None
+        clef_name = "bass" if (clef_obj and clef_obj.sign == "F") else "treble"
+
+        voices.append((vid, pname, clef_name, measures))
+
     for vid, pname, clef_name, _ in voices:
         abc_lines.append(f'V:{vid} name="{pname}" clef={clef_name}')
 
-    # Helper: render a single measure to an ABC bar string
+    # Note → ABC converter with key context
+    def pitch_to_abc(m21_pitch: music21.pitch.Pitch, key_sig: music21.key.Key) -> str:
+        step = m21_pitch.step
+        octave = m21_pitch.octave
+        acc_token = ""
+
+        if m21_pitch.accidental:
+            show_acc = True
+            ks_acc = key_sig.accidentalByStep(step)
+            if ks_acc and ks_acc.name == m21_pitch.accidental.name:
+                show_acc = False
+            if show_acc:
+                acc_map = {"sharp": "^", "flat": "_", "natural": "="}
+                acc_token = acc_map.get(m21_pitch.accidental.name, "")
+
+        if octave >= 5:
+            note = step.lower() + "'" * (octave - 5)
+        else:
+            note = step.upper() + "," * max(0, 4 - octave)
+
+        return acc_token + note
+
+    # Duration converter
+    def duration_to_abc(m21_duration: music21.duration.Duration) -> str:
+        from fractions import Fraction
+        try:
+            frac = Fraction(m21_duration.quarterLength).limit_denominator(32)
+            if frac == 0:
+                return ""  # skip zero-length objects
+            val = frac / Fraction(L_unit_ql)
+            if val == 1:
+                return ""
+            if val < 1:
+                return f"/{int(1 / val)}"
+            if val.denominator == 1:
+                return str(val.numerator)
+            return f"{val.numerator}/{val.denominator}"
+        except Exception as e:
+            log(f"[WARN] Failed to convert duration {m21_duration}: {e}")
+            return ""
+
+
+    # Measure renderer
     def render_measure(measure):
         tokens = []
-        for el in measure.notesAndRests:
-            if isinstance(el, music21.note.Note):
-                tok = pitch_to_abc(el.pitch) + duration_to_abc(el.duration, L_unit_ql)
-            elif isinstance(el, music21.chord.Chord):
-                notes = [pitch_to_abc(p) for p in el.pitches]
-                tok = "[" + " ".join(notes) + "]" + duration_to_abc(el.duration, L_unit_ql)
-            else:  # rest
-                tok = "z" + duration_to_abc(el.duration, L_unit_ql)
-            tokens.append(tok)
+        for el in measure.recurse().notesAndRests:
+            if isinstance(el, note.Note):
+                tokens.append(pitch_to_abc(el.pitch, key_obj) + duration_to_abc(el.duration))
+            elif isinstance(el, chord.Chord):
+                notes = [pitch_to_abc(p, key_obj) for p in el.pitches]
+                tokens.append("[" + " ".join(notes) + "]" + duration_to_abc(el.duration))
+            elif isinstance(el, note.Rest):
+                tokens.append("z" + duration_to_abc(el.duration))
         return " ".join(tokens) + " |"
 
-    # Voice bodies: group 4 measures per line
-    for vid, _, _, part in voices:
+    # Render each voice
+    for vid, _, _, measures in voices:
         abc_lines.append(f"V:{vid}")
-        measures = part.getElementsByClass(music21.stream.Measure)
         bars = [render_measure(m) for m in measures]
         for i in range(0, len(bars), 4):
-            chunk = bars[i : i + 4]
-            abc_lines.append(" ".join(chunk))
+            abc_lines.append(" ".join(bars[i:i + 4]))
 
     return "\n".join(abc_lines)
+
 
 def nwc_to_musicxml_jar(nwc_filepath, script_path='./jar/nwc2xml.sh', output_musicxml_filepath=None):
     """Wrapper for local shell script conversion to MusicXML."""
