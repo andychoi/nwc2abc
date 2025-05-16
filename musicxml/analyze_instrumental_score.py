@@ -1,4 +1,4 @@
-from music21 import converter, note, pitch, interval
+from music21 import converter, note, pitch, interval, roman
 from common.harmony_utils import detect_key, get_chords, analyze_chord_progression
 from common.html_report import render_html_report
 
@@ -40,14 +40,24 @@ def analyze_multistaff_harmony(part, instrument_name, issues_by_measure):
             except:
                 continue
 
-def analyze_instrumental(filepath):
+def analyze_instrumental(filepath, use_full_score_chords=False):
     score = converter.parse(filepath)
     key = detect_key(score)
-    chords = get_chords(score)
+    chords = get_chords(score, use_full_score=use_full_score_chords)
     progression_issues = analyze_chord_progression(chords, key)
 
     issues_by_measure = {}
+    chords_by_measure = {}
     part_names = []
+
+    # Collect chords by measure for ABC rendering
+    for c in chords:
+        try:
+            rn = roman.RomanNumeral(c, key)
+            m = int(c.measureNumber) if hasattr(c, 'measureNumber') else int(c.offset)
+            chords_by_measure.setdefault(m, []).append(rn.figure)
+        except:
+            continue
 
     for part in score.parts:
         name = get_instrument_name(part)
@@ -66,5 +76,11 @@ def analyze_instrumental(filepath):
         if part_names:
             issues_by_measure.setdefault(m, {}).setdefault(part_names[0], []).append("prog")
 
-    render_html_report(issues_by_measure, part_names, "report/instrumental_report.html")
+    render_html_report(
+        issues_by_measure,
+        part_names,
+        "report/instrumental_report.html",
+        chords_by_measure=chords_by_measure,
+        abc_key=key
+    )
     print("Instrumental harmony analysis complete. Output: instrumental_report.html")

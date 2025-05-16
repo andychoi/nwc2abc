@@ -1,16 +1,17 @@
-# musicxml/run_analysis.py
 import sys
 import os
 import tempfile
 import subprocess
+from music21 import converter
 from analyze_vocal_score import analyze_vocal
 from analyze_instrumental_score import analyze_instrumental
 from analyze_combined_score import analyze_combined
-from common.style_advisor import style_advice
-from music21 import converter
+from analyze_style_score import analyze_style
 
 def nwc_to_musicxml_jar(nwc_filepath, script_path='./jar/nwc2xml.sh', output_musicxml_filepath=None):
-    """Wrapper for local shell script conversion to MusicXML."""
+    """
+    Wrapper for local shell script that converts NWCtxt file to MusicXML.
+    """
     if output_musicxml_filepath is None:
         fd, output_musicxml_filepath = tempfile.mkstemp(suffix='.musicxml')
         os.close(fd)
@@ -18,7 +19,7 @@ def nwc_to_musicxml_jar(nwc_filepath, script_path='./jar/nwc2xml.sh', output_mus
         subprocess.run([script_path, nwc_filepath, output_musicxml_filepath], check=True, text=True)
     except subprocess.CalledProcessError as e:
         print(f"[ERROR] Conversion failed: {e}")
-        sys.exit(1)        
+        sys.exit(1)
     return output_musicxml_filepath
 
 def convert_if_nwc(filepath):
@@ -27,22 +28,29 @@ def convert_if_nwc(filepath):
         filepath = nwc_to_musicxml_jar(filepath)
     return filepath
 
-if __name__ == "__main__":
+def main():
     if len(sys.argv) < 3:
-        print("Usage: run_analysis.py [vocal|instrumental] path/to/score")
+        print("Usage: run_analysis.py [vocal|instrumental|combined|style] path/to/score [--full-score-chords]")
         sys.exit(1)
 
-    mode, path = sys.argv[1], sys.argv[2]
+    mode = sys.argv[1]
+    path = sys.argv[2]
+    use_full_score_chords = '--full-score-chords' in sys.argv
+
     musicxml_path = convert_if_nwc(path)
 
+    # Pass a flag into each analyzer if needed — adjust analyzers to accept this if required
     if mode == "vocal":
-        analyze_vocal(musicxml_path)
+        analyze_vocal(musicxml_path, use_full_score_chords=use_full_score_chords)
     elif mode == "instrumental":
-        analyze_instrumental(musicxml_path)
+        analyze_instrumental(musicxml_path, use_full_score_chords=use_full_score_chords)
     elif mode == "combined":
-        score = analyze_combined(musicxml_path)
+        analyze_combined(musicxml_path, use_full_score_chords=use_full_score_chords)
     elif mode == "style":
-        from analyze_style_score import analyze_style
         analyze_style(musicxml_path)
     else:
-        print("Unknown mode. Use 'vocal', 'instrumental', or 'combined'")
+        print("Unknown mode. Use 'vocal', 'instrumental', 'combined', or 'style'")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

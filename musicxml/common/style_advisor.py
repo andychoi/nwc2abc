@@ -64,13 +64,13 @@ def syncopation_advice(score):
                 advice.append(f"{p.partName}: consider syncopation in measure {m.measureNumber}")
     return advice
 
-def reharmonization_advice(score):
+def reharmonization_advice(score, use_full_score_chords=False):
     """
     Propose secondary dominants for each diatonic chord.
     """
     advice = []
     key = detect_key(score)
-    chords = get_chords(score)
+    chords = get_chords(score, use_full_score=use_full_score_chords)
     for c in chords:
         try:
             rn = m21key.roman.RomanNumeral(c, key)

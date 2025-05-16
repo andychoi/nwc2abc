@@ -135,7 +135,7 @@ def analyze_multistaff_harmony(part, instrument_name, issues_by_measure):
 def analyze_instrumental(filepath):
     score = converter.parse(filepath)
     key = detect_key(score)
-    chords = get_chords(score)
+    chords = get_chords(score, use_full_score=use_full_score_chords)
     progression_issues = analyze_chord_progression(chords, key)
 
     issues_by_measure = {}
@@ -163,6 +163,68 @@ def analyze_instrumental(filepath):
 
 ```
 
+## `analyze_style_score.py`
+```python
+# musicxml/analyze_style_score.py
+
+from music21 import converter
+from common.style_advisor import style_advice
+from common.part_utils import classify_parts
+from common.html_report import render_style_report
+import re
+import os
+
+def analyze_style(filepath):
+    # 1) Parse score and run stylistic analysis
+    score = converter.parse(filepath)
+    raw_adv = style_advice(score)
+
+    # 2) Classify parts
+    vocal_parts, instr_parts = classify_parts(score)
+    part_names = [p.partName for p in vocal_parts + instr_parts]
+
+    # 3) Distribute advice into measure/part table
+    issues_by_measure = {}
+
+    for adv in raw_adv:
+        # e.g. "Measure 3: dense texture"
+        m = re.match(r"Measure (\d+): (.+)", adv)
+        if m:
+            measure = int(m.group(1))
+            text = m.group(2)
+            for part in part_names:
+                issues_by_measure.setdefault(measure, {}).setdefault(part, []).append(text)
+            continue
+
+        # e.g. "Alto: consider syncopation in measure 4"
+        p = re.match(r"(.+): .*measure (\d+)", adv)
+        if p:
+            part, meas = p.group(1), int(p.group(2))
+            issues_by_measure.setdefault(meas, {}).setdefault(part, []).append("syncopation")
+            continue
+
+        # e.g. "At offset 0.0: try secondary dominant ^D"
+        h = re.match(r"At offset ([0-9.]+): (.+)", adv)
+        if h:
+            offset = float(h.group(1))
+            measure = int(offset) + 1
+            text = h.group(2)
+            for part in part_names:
+                issues_by_measure.setdefault(measure, {}).setdefault(part, []).append(text)
+            continue
+
+        # fallback
+        for part in part_names:
+            issues_by_measure.setdefault(1, {}).setdefault(part, []).append(adv)
+
+    # 4) Output HTML
+    os.makedirs("report", exist_ok=True)
+    report_path = "report/style_report.html"
+    render_style_report(issues_by_measure, part_names, report_path)
+    print(f"Style report written to {report_path}")
+
+```
+
 ## `analyze_vocal_score.py`
 ```python
 from music21 import converter, interval, note, pitch
@@ -186,7 +248,7 @@ def is_note_out_of_range(n, part_name):
 def analyze_vocal(filepath):
     score = converter.parse(filepath)
     key = detect_key(score)
-    chords = get_chords(score)
+    chords = get_chords(score, use_full_score=use_full_score_chords)
     progression_issues = analyze_chord_progression(chords, key)
 
     voice_labels = ['Soprano', 'Alto', 'Tenor', 'Bass']
@@ -253,7 +315,7 @@ def analyze_vocal(filepath):
         m = int(offset)
         issues_by_measure.setdefault(m, {}).setdefault("Soprano", []).append("prog")
 
-    render_html_report(issues_by_measure, voice_labels, "report/vocal_report.html")
+    render_html_report(issues_by_measure, voice_labels, "report/vocal_report.html", chords_by_measure=chords_by_measure, abc_key=key)
     print("Vocal harmony analysis complete. Output: vocal_report.html")
 
 ```
@@ -262,30 +324,36 @@ def analyze_vocal(filepath):
 ```python
 # common/abc_utils.py
 
-from music21 import pitch
+from music21 import pitch, key
 
-def pitch_to_abc(m21_pitch):
-    """
-    Convert a music21.pitch.Pitch into ABC pitch notation (with octave marks).
-    """
+def pitch_to_abc(m21_pitch: pitch.Pitch, key_sig: key.Key = None) -> str:
     step = m21_pitch.step
     octave = m21_pitch.octave
     acc_token = ""
+
     if m21_pitch.accidental:
-        acc_map = {"sharp": "^", "flat": "_", "natural": "="}
-        acc_token = acc_map.get(m21_pitch.accidental.name, "")
-    # ABC uses lowercase for octave ≥5
+        show_acc = True
+        if key_sig:
+            ks_acc = key_sig.accidentalByStep(step)
+            if ks_acc and ks_acc.name == m21_pitch.accidental.name:
+                show_acc = False
+        if show_acc:
+            acc_map = {"sharp": "^", "flat": "_", "natural": "="}
+            acc_token = acc_map.get(m21_pitch.accidental.name, "")
+
     if octave >= 5:
         note = step.lower() + "'" * (octave - 5)
     else:
         note = step.upper() + "," * max(0, 4 - octave)
+
     return acc_token + note
 
 ```
 
 ## `common/harmony_utils.py`
 ```python
-from music21 import analysis, chord, key as key_module
+# common/harmony_utils.py
+from music21 import analysis, chord, roman, key as key_module
 
 def detect_key(score):
     return score.analyze('key')
@@ -294,20 +362,90 @@ def get_chords(score):
     return score.chordify().recurse().getElementsByClass('Chord')
 
 def analyze_chord_progression(chords, key):
-    prev_rn = None
+    """
+    Analyze chord progression and detect:
+    - V not resolving to I
+    - Modal mixture chords (borrowed from parallel key)
+    - Deceptive cadences (V → vi)
+    """
     issues = []
+    prev_rn = None
+
+    parallel_key = key.parallelKey
     for c in chords:
         if not c.pitches:
             continue
         try:
-            rn = analysis.roman.RomanNumeral(c, key)
+            rn = roman.RomanNumeral(c, key)
+            p_rn = roman.RomanNumeral(c, parallel_key)
         except:
             continue
-        if prev_rn and prev_rn.figure.startswith("V") and not rn.figure.startswith("I"):
-            issues.append((c.offset, f"V does not resolve to I (found {rn.figure})"))
+
+        m = int(c.measureNumber) if hasattr(c, 'measureNumber') else int(c.offset)
+
+        # --- V should resolve to I ---
+        if prev_rn and prev_rn.figure.startswith("V"):
+            if rn.figure != "I":
+                if rn.figure == "vi":
+                    issues.append((m, f"deceptive cadence: V → vi"))
+                else:
+                    issues.append((m, f"V does not resolve to I (found {rn.figure})"))
+
+        # --- Modal mixture (if chord fits better in parallel key) ---
+        if p_rn.figure not in ('I', 'V') and p_rn.figure != rn.figure:
+            # Avoid falsely triggering on same-name chords
+            if p_rn.romanNumeral == rn.romanNumeral:
+                continue
+            if p_rn.root().name != rn.root().name:
+                issues.append((m, f"modal mixture: {p_rn.figure} (parallel key)"))
+
         prev_rn = rn
+
     return issues
 
+
+def suggest_reharmonizations(chords, key):
+    suggestions = []
+    for i, c in enumerate(chords):
+        try:
+            rn = roman.RomanNumeral(c, key)
+        except:
+            continue
+
+        subs = [rn.figure]
+
+        if i + 1 < len(chords):
+            try:
+                next_rn = roman.RomanNumeral(chords[i + 1], key)
+                sec_dom = roman.RomanNumeral(f'V/{next_rn.root().name}', key)
+                subs.append(sec_dom.figure)
+            except: pass
+
+        try:
+            mix_rn = roman.RomanNumeral(c, key.parallelKey)
+            if mix_rn.figure not in subs:
+                subs.append(mix_rn.figure + "*")
+        except: pass
+
+        if rn.figure == 'V' and i + 1 < len(chords):
+            try:
+                actual = roman.RomanNumeral(chords[i + 1], key)
+                if actual.figure != 'I':
+                    subs.append('vi')
+            except: pass
+
+        if rn.figure == 'I':
+            subs.extend(['vi', 'iii'])
+
+        abc_preview = ' '.join(f'"{fig}" {roman.RomanNumeral(fig, key).root().name}' for fig in subs if '/' not in fig)
+
+        suggestions.append({
+            'measure': int(c.measureNumber) if hasattr(c, 'measureNumber') else i + 1,
+            'original': rn.figure,
+            'alternatives': list(dict.fromkeys(subs)),
+            'abc': abc_preview
+        })
+    return suggestions
 ```
 
 ## `common/html_report.py`
@@ -315,6 +453,7 @@ def analyze_chord_progression(chords, key):
 # common/html_report.py
 
 from common.abc_utils import pitch_to_abc
+from music21 import roman
 from music21 import pitch as m21pitch, key as m21key
 
 # You can change this to whatever key the piece is in:
@@ -326,6 +465,7 @@ html_template = """<!DOCTYPE html>
     <meta charset="UTF-8">
     <title>Harmony Analysis Report</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/abcjs@6.0.0-beta.33/bin/abcjs_basic.min.js"></script>
     <style>
         .ok {{ background-color: #e9fce9; }}
         .voicing {{ background-color: #fff3cd; color: #856404; }}
@@ -335,6 +475,10 @@ html_template = """<!DOCTYPE html>
         .note-issue {{ margin-bottom: 0.5em; }}
         .note-issue b {{ display: block; }}
         .note-issue small {{ font-style: italic; }}
+        .abc-hover {
+            cursor: help;
+            text-decoration: dotted underline;
+        }        
     </style>
 </head>
 <body class="container my-4">
@@ -350,6 +494,12 @@ html_template = """<!DOCTYPE html>
             {rows}
         </tbody>
     </table>
+    <h2 class="mt-5">ABC Preview</h2>
+    <div id="abc" class="abc-container"></div>
+    <script>
+        const abc = `{abc_preview}`;
+        ABCJS.renderAbc("abc", abc);
+    </script>    
 </body>
 </html>
 """
@@ -414,35 +564,66 @@ def recommend_fix(issue_text):
 
     return "Review harmonic context."
 
+def chord_to_abc(roman_str, k):
+    try:
+        rn = roman.RomanNumeral(roman_str, k)
+        root = pitch_to_abc(rn.root(), k)
+        pitches = [pitch_to_abc(p, k) for p in rn.pitches]
+        return f'"{roman_str}" [{ " ".join(pitches) }]'
+    except:
+        return f'"{roman_str}" z'
+
 def render_html_report(issues_by_measure, part_names, output_path):
     # Build table header
-    columns_html = ''.join(f'<th>{part}</th>' for part in part_names)
+    columns_html = '<th>Measure</th><th>Chord</th>' + ''.join(f'<th>{part}</th>' for part in part_names)
 
     rows = []
-    for m in sorted(issues_by_measure.keys()):
-        cells = [f'<td>{m}</td>']
-        for part in part_names:
-            issues = issues_by_measure.get(m, {}).get(part, [])
-            if not issues:
-                cells.append('<td class="ok">✓</td>')
-            else:
-                cell_html = []
-                for issue in issues:
-                    css = classify_issue(issue)
-                    fix = recommend_fix(issue)
-                    cell_html.append(
-                        f'<div class="note-issue {css}">'
-                        f'<b>{issue}</b>'
-                        f'<small>{fix}</small>'
-                        f'</div>'
-                    )
-                cells.append(f'<td>{"".join(cell_html)}</td>')
-        rows.append('<tr>' + ''.join(cells) + '</tr>')
+for m in sorted(issues_by_measure.keys()):
+    chords = chords_by_measure.get(m, []) if chords_by_measure else []
+    if isinstance(chords, str):  # Backward compatibility
+        chords = [chords]
+    chord_labels = ", ".join(chords)
+
+    # ABC hover preview
+    abc_hover = ""
+    if abc_key and chords:
+        abc_lines = [chord_to_abc(rn, abc_key) for rn in chords]
+        abc_preview = " ".join(abc_lines)
+        abc_hover = f'<div class="abc-hover" title="{abc_preview}">{chord_labels}</div>'
+    else:
+        abc_hover = chord_labels
+
+    cells = [f'<td>{m}</td>', f'<td>{abc_hover}</td>']
+    for part in part_names:
+        issues = issues_by_measure.get(m, {}).get(part, [])
+        if not issues:
+            cells.append('<td class="ok">✓</td>')
+        else:
+            cell_html = []
+            for issue in issues:
+                css = classify_issue(issue)
+                fix = recommend_fix(issue)
+                cell_html.append(
+                    f'<div class="note-issue {css}">'
+                    f'<b>{issue}</b>'
+                    f'<small>{fix}</small>'
+                    f'</div>'
+                )
+            cells.append(f'<td>{"".join(cell_html)}</td>')
+    rows.append('<tr>' + ''.join(cells) + '</tr>')
+
 
     html = html_template.format(columns=columns_html, rows="\n".join(rows))
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html)
 
+def render_style_report(issues_by_measure, part_names, output_path):
+    """
+    Generate a column-per-staff style report exactly like the harmony table.
+    `issues_by_measure` should map measure → part → list of style issues.
+    """
+    # Reuse the same html_template and rendering logic:
+    render_html_report(issues_by_measure, part_names, output_path)
 ```
 
 ## `common/part_utils.py`
@@ -539,7 +720,7 @@ def reharmonization_advice(score):
     """
     advice = []
     key = detect_key(score)
-    chords = get_chords(score)
+    chords = get_chords(score, use_full_score=use_full_score_chords)
     for c in chords:
         try:
             rn = m21key.roman.RomanNumeral(c, key)
@@ -618,20 +799,8 @@ if __name__ == "__main__":
     elif mode == "combined":
         score = analyze_combined(musicxml_path)
     elif mode == "style":
-        score = converter.parse(musicxml_path)
-        advice = style_advice(score)
-        # write both console and an HTML report
-        from common.html_report import render_html_report
-
-        # Console
-        # print("\n=== Style Advisor Recommendations ===")
-        # for line in advice:
-        #     print(f"- {line}")
-
-        # HTML
-        report_path = "report/style_report.html"
-        render_html_report(advice, report_path)
-        print(f"Style report written to {report_path}")   
+        from analyze_style_score import analyze_style
+        analyze_style(musicxml_path)
     else:
         print("Unknown mode. Use 'vocal', 'instrumental', or 'combined'")
 ```

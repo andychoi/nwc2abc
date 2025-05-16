@@ -1,9 +1,7 @@
-# musicxml/analyze_style_score.py
-
 from music21 import converter
 from common.style_advisor import style_advice
 from common.part_utils import classify_parts
-from common.html_report import render_style_report
+from common.html_report import render_html_report
 import re
 import os
 
@@ -53,5 +51,5 @@ def analyze_style(filepath):
     # 4) Output HTML
     os.makedirs("report", exist_ok=True)
     report_path = "report/style_report.html"
-    render_style_report(issues_by_measure, part_names, report_path)
+    render_html_report(issues_by_measure, part_names, report_path)
     print(f"Style report written to {report_path}")

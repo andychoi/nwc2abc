@@ -1,7 +1,6 @@
-from music21 import converter, interval, note, pitch
+from music21 import converter, interval, note, pitch, roman
 from common.harmony_utils import detect_key, get_chords, analyze_chord_progression
 from common.html_report import render_html_report
-import os
 
 vocal_ranges = {
     'Soprano': ('C4', 'G5'),
@@ -16,11 +15,20 @@ def is_note_out_of_range(n, part_name):
     low, high = pitch.Pitch(vocal_ranges[part_name][0]), pitch.Pitch(vocal_ranges[part_name][1])
     return n.pitch < low or n.pitch > high
 
-def analyze_vocal(filepath):
+def analyze_vocal(filepath, use_full_score_chords=False):
     score = converter.parse(filepath)
     key = detect_key(score)
-    chords = get_chords(score)
+    chords = get_chords(score, use_full_score=use_full_score_chords)
     progression_issues = analyze_chord_progression(chords, key)
+
+    chords_by_measure = {}
+    for c in chords:
+        try:
+            rn = roman.RomanNumeral(c, key)
+            m = int(c.measureNumber) if hasattr(c, 'measureNumber') else int(c.offset)
+            chords_by_measure.setdefault(m, []).append(rn.figure)
+        except:
+            continue
 
     voice_labels = ['Soprano', 'Alto', 'Tenor', 'Bass']
     voices = [list(score.parts[i].recurse().notes) for i in range(min(4, len(score.parts)))]
@@ -66,25 +74,31 @@ def analyze_vocal(filepath):
         for j in range(i+1, 4):
             v1 = voices[i]
             v2 = voices[j]
-            for n1, n2 in zip(v1, v2):
+            for idx, (n1, n2) in enumerate(zip(v1, v2)):
                 if not isinstance(n1, note.Note) or not isinstance(n2, note.Note):
                     continue
                 try:
                     intvl = interval.Interval(n1, n2)
                     if intvl.simpleName in ['P5', 'P8']:
-                        next1 = v1[v1.index(n1)+1] if v1.index(n1)+1 < len(v1) else None
-                        next2 = v2[v2.index(n2)+1] if v2.index(n2)+1 < len(v2) else None
-                        if isinstance(next1, note.Note) and isinstance(next2, note.Note):
-                            next_intvl = interval.Interval(next1, next2)
-                            if next_intvl.simpleName == intvl.simpleName:
-                                m = int(n1.measureNumber)
-                                issues_by_measure.setdefault(m, {}).setdefault(voice_labels[i], []).append(f"parallel {intvl.simpleName}")
+                        if idx + 1 < len(v1) and idx + 1 < len(v2):
+                            next1, next2 = v1[idx+1], v2[idx+1]
+                            if isinstance(next1, note.Note) and isinstance(next2, note.Note):
+                                next_intvl = interval.Interval(next1, next2)
+                                if next_intvl.simpleName == intvl.simpleName:
+                                    m = int(n1.measureNumber)
+                                    issues_by_measure.setdefault(m, {}).setdefault(voice_labels[i], []).append(f"parallel {intvl.simpleName}")
                 except:
                     continue
 
     for offset, issue in progression_issues:
         m = int(offset)
-        issues_by_measure.setdefault(m, {}).setdefault("Soprano", []).append("prog")
+        issues_by_measure.setdefault(m, {}).setdefault("Soprano", []).append(issue)
 
-    render_html_report(issues_by_measure, voice_labels, "report/vocal_report.html")
+    render_html_report(
+        issues_by_measure,
+        voice_labels,
+        "report/vocal_report.html",
+        chords_by_measure=chords_by_measure,
+        abc_key=key
+    )
     print("Vocal harmony analysis complete. Output: vocal_report.html")
