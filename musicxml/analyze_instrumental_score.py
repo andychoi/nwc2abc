@@ -53,7 +53,7 @@ def analyze_instrumental(filepath, use_full_score_chords=False):
     # Collect chords by measure for ABC rendering
     for c in chords:
         try:
-            rn = roman.RomanNumeral(c, key)
+            rn = roman.romanNumeralFromChord(c, key)
             m = int(c.measureNumber) if hasattr(c, 'measureNumber') else int(c.offset)
             chords_by_measure.setdefault(m, []).append(rn.figure)
         except:

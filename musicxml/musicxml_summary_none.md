@@ -376,8 +376,8 @@ def analyze_chord_progression(chords, key):
         if not c.pitches:
             continue
         try:
-            rn = roman.RomanNumeral(c, key)
-            p_rn = roman.RomanNumeral(c, parallel_key)
+            rn = roman.romanNumeralFromChord(c, key)
+            p_rn = roman.romanNumeralFromChord(c, parallel_key)
         except:
             continue
 
@@ -408,7 +408,7 @@ def suggest_reharmonizations(chords, key):
     suggestions = []
     for i, c in enumerate(chords):
         try:
-            rn = roman.RomanNumeral(c, key)
+            rn = roman.romanNumeralFromChord(c, key)
         except:
             continue
 
@@ -416,20 +416,20 @@ def suggest_reharmonizations(chords, key):
 
         if i + 1 < len(chords):
             try:
-                next_rn = roman.RomanNumeral(chords[i + 1], key)
-                sec_dom = roman.RomanNumeral(f'V/{next_rn.root().name}', key)
+                next_rn = roman.romanNumeralFromChord(chords[i + 1], key)
+                sec_dom = roman.romanNumeralFromChord(f'V/{next_rn.root().name}', key)
                 subs.append(sec_dom.figure)
             except: pass
 
         try:
-            mix_rn = roman.RomanNumeral(c, key.parallelKey)
+            mix_rn = roman.romanNumeralFromChord(c, key.parallelKey)
             if mix_rn.figure not in subs:
                 subs.append(mix_rn.figure + "*")
         except: pass
 
         if rn.figure == 'V' and i + 1 < len(chords):
             try:
-                actual = roman.RomanNumeral(chords[i + 1], key)
+                actual = roman.romanNumeralFromChord(chords[i + 1], key)
                 if actual.figure != 'I':
                     subs.append('vi')
             except: pass
@@ -437,7 +437,7 @@ def suggest_reharmonizations(chords, key):
         if rn.figure == 'I':
             subs.extend(['vi', 'iii'])
 
-        abc_preview = ' '.join(f'"{fig}" {roman.RomanNumeral(fig, key).root().name}' for fig in subs if '/' not in fig)
+        abc_preview = ' '.join(f'"{fig}" {roman.romanNumeralFromChord(fig, key).root().name}' for fig in subs if '/' not in fig)
 
         suggestions.append({
             'measure': int(c.measureNumber) if hasattr(c, 'measureNumber') else i + 1,
@@ -465,7 +465,7 @@ html_template = """<!DOCTYPE html>
     <meta charset="UTF-8">
     <title>Harmony Analysis Report</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/abcjs@6.0.0-beta.33/bin/abcjs_basic.min.js"></script>
+    <script src=\"https://cdn.jsdelivr.net/npm/abcjs@6.4.0/dist/abcjs-basic-min.js\"></script>
     <style>
         .ok {{ background-color: #e9fce9; }}
         .voicing {{ background-color: #fff3cd; color: #856404; }}
@@ -566,7 +566,7 @@ def recommend_fix(issue_text):
 
 def chord_to_abc(roman_str, k):
     try:
-        rn = roman.RomanNumeral(roman_str, k)
+        rn = roman.romanNumeralFromChord(roman_str, k)
         root = pitch_to_abc(rn.root(), k)
         pitches = [pitch_to_abc(p, k) for p in rn.pitches]
         return f'"{roman_str}" [{ " ".join(pitches) }]'
@@ -723,7 +723,7 @@ def reharmonization_advice(score):
     chords = get_chords(score, use_full_score=use_full_score_chords)
     for c in chords:
         try:
-            rn = m21key.roman.RomanNumeral(c, key)
+            rn = m21key.roman.romanNumeralFromChord(c, key)
             if rn.degree not in (5,):
                 sec = key.pitchFromDegree(5).transpose((rn.degree-1)*7)  # V of that degree
                 advice.append(

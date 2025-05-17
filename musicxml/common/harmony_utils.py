@@ -44,8 +44,8 @@ def analyze_chord_progression(chords, key):
         if not c.pitches:
             continue
         try:
-            rn = roman.RomanNumeral(c, key)
-            p_rn = roman.RomanNumeral(c, parallel_key)
+            rn = roman.romanNumeralFromChord(c, key)
+            p_rn = roman.romanNumeralFromChord(c, parallel_key)
         except:
             continue
 
@@ -76,7 +76,7 @@ def suggest_reharmonizations(chords, key):
     suggestions = []
     for i, c in enumerate(chords):
         try:
-            rn = roman.RomanNumeral(c, key)
+            rn = roman.romanNumeralFromChord(c, key)
         except:
             continue
 
@@ -84,20 +84,20 @@ def suggest_reharmonizations(chords, key):
 
         if i + 1 < len(chords):
             try:
-                next_rn = roman.RomanNumeral(chords[i + 1], key)
-                sec_dom = roman.RomanNumeral(f'V/{next_rn.root().name}', key)
+                next_rn = roman.romanNumeralFromChord(chords[i + 1], key)
+                sec_dom = roman.romanNumeralFromChord(f'V/{next_rn.root().name}', key)
                 subs.append(sec_dom.figure)
             except: pass
 
         try:
-            mix_rn = roman.RomanNumeral(c, key.parallelKey)
+            mix_rn = roman.romanNumeralFromChord(c, key.parallelKey)
             if mix_rn.figure not in subs:
                 subs.append(mix_rn.figure + "*")
         except: pass
 
         if rn.figure == 'V' and i + 1 < len(chords):
             try:
-                actual = roman.RomanNumeral(chords[i + 1], key)
+                actual = roman.romanNumeralFromChord(chords[i + 1], key)
                 if actual.figure != 'I':
                     subs.append('vi')
             except: pass
@@ -105,7 +105,7 @@ def suggest_reharmonizations(chords, key):
         if rn.figure == 'I':
             subs.extend(['vi', 'iii'])
 
-        abc_preview = ' '.join(f'"{fig}" {roman.RomanNumeral(fig, key).root().name}' for fig in subs if '/' not in fig)
+        abc_preview = ' '.join(f'"{fig}" {roman.romanNumeralFromChord(fig, key).root().name}' for fig in subs if '/' not in fig)
 
         suggestions.append({
             'measure': int(c.measureNumber) if hasattr(c, 'measureNumber') else i + 1,

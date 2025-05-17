@@ -70,7 +70,7 @@ def analyze_combined(filepath, use_full_score_chords=False):
 
     for c in chords:
         try:
-            rn = roman.RomanNumeral(c, key)
+            rn = roman.romanNumeralFromChord(c, key)
             m = int(c.measureNumber) if hasattr(c, 'measureNumber') else int(c.offset)
             chords_by_measure.setdefault(m, []).append(rn.figure)
         except:

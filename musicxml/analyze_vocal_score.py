@@ -15,20 +15,21 @@ def is_note_out_of_range(n, part_name):
     low, high = pitch.Pitch(vocal_ranges[part_name][0]), pitch.Pitch(vocal_ranges[part_name][1])
     return n.pitch < low or n.pitch > high
 
-def analyze_vocal(filepath, use_full_score_chords=False):
+def analyze_vocal(filepath, use_full_score_chords=True):
     score = converter.parse(filepath)
     key = detect_key(score)
     chords = get_chords(score, use_full_score=use_full_score_chords)
+    # print(f"[DEBUG] Found {len(chords)} chords")
     progression_issues = analyze_chord_progression(chords, key)
 
     chords_by_measure = {}
     for c in chords:
         try:
-            rn = roman.RomanNumeral(c, key)
+            rn = roman.romanNumeralFromChord(c, key)
             m = int(c.measureNumber) if hasattr(c, 'measureNumber') else int(c.offset)
             chords_by_measure.setdefault(m, []).append(rn.figure)
-        except:
-            continue
+        except Exception as e:
+            print(f"[WARN] Failed to create RomanNumeral for chord {c}: {e}")
 
     voice_labels = ['Soprano', 'Alto', 'Tenor', 'Bass']
     voices = [list(score.parts[i].recurse().notes) for i in range(min(4, len(score.parts)))]
