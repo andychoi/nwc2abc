@@ -4,7 +4,7 @@ from music21 import pitch, key
 
 def pitch_to_abc(m21_pitch: pitch.Pitch, key_sig: key.Key = None) -> str:
     step = m21_pitch.step
-    octave = m21_pitch.octave
+    octave = m21_pitch.octave if m21_pitch.octave is not None else 4  # Default to octave 4 if missing
     acc_token = ""
 
     if m21_pitch.accidental:
