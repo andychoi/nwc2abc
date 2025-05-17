@@ -9,6 +9,8 @@ instrument_ranges = {
     'Piano': ('A0', 'C8'),
 }
 
+VOCAL_PART_NAMES = {'Soprano', 'Alto', 'Tenor', 'Bass'}
+
 def get_instrument_name(part):
     instr = part.getInstrument(returnDefault=True)
     return instr.partName or instr.instrumentName or f"UnknownPart_{part.id}"
@@ -50,7 +52,7 @@ def analyze_instrumental(filepath, use_full_score_chords=False):
     chords_by_measure = {}
     part_names = []
 
-    # Collect chords by measure for ABC rendering
+    # Build chords by measure
     for c in chords:
         try:
             rn = roman.romanNumeralFromChord(c, key)
@@ -59,23 +61,57 @@ def analyze_instrumental(filepath, use_full_score_chords=False):
         except:
             continue
 
-    for part in score.parts:
+    # Filter out vocal parts
+    instrumental_parts = [p for p in score.parts if get_instrument_name(p) not in VOCAL_PART_NAMES]
+
+    if not instrumental_parts:
+        print("No instrumental parts found.")
+        return
+
+    # Identify topmost instrumental part as melody (like soprano)
+    melody_part = instrumental_parts[0]
+
+    # Collect part names and perform range & multistaff checks
+    for part in instrumental_parts:
         name = get_instrument_name(part)
         part_names.append(name)
-        for n in part.flat.notes:
+
+        for n in part.flatten().notes:
             if is_note_out_of_range(n, name):
                 m = int(n.measureNumber)
                 issues_by_measure.setdefault(m, {}).setdefault(name, []).append("range")
 
-        staff_count = set(getattr(n, 'staff', 1) for n in part.recurse().notes)
-        if len(staff_count) >= 2:
+        staff_ids = set(getattr(n, 'staff', 1) for n in part.recurse().notes)
+        if len(staff_ids) >= 2:
             analyze_multistaff_harmony(part, name, issues_by_measure)
 
+    # Analyze dissonance and doubling vs. melody part
+    measures = melody_part.getElementsByClass('Measure')
+    max_m = max((m.measureNumber for m in measures), default=0)
+
+    for part in instrumental_parts[1:]:  # skip melody itself
+        name = get_instrument_name(part)
+        for m in range(1, max_m + 1):
+            melody_measure = melody_part.measure(m)
+            inst_measure = part.measure(m)
+            m_notes = [n for n in melody_measure.notes if isinstance(n, note.Note)] if melody_measure else []
+            i_notes = [n for n in inst_measure.notes if isinstance(n, note.Note)] if inst_measure else []
+
+            for mn in m_notes:
+                for inote in i_notes:
+                    iv = interval.Interval(mn, inote)
+                    if not iv.isConsonant():
+                        issues_by_measure.setdefault(m, {}).setdefault(name, []).append(f"dissonance with {mn.nameWithOctave}")
+                    if iv.semitones == 0:
+                        issues_by_measure.setdefault(m, {}).setdefault(name, []).append(f"doubled {mn.nameWithOctave}")
+
+    # Mark chord progression issues under melody part
     for offset, issue in progression_issues:
         m = int(offset)
-        if part_names:
-            issues_by_measure.setdefault(m, {}).setdefault(part_names[0], []).append("prog")
+        name = get_instrument_name(melody_part)
+        issues_by_measure.setdefault(m, {}).setdefault(name, []).append("prog")
 
+    # Emit report
     render_html_report(
         issues_by_measure,
         part_names,
