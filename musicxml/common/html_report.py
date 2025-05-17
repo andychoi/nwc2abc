@@ -46,17 +46,7 @@ html_template = """<!DOCTYPE html>
 {rows}
         </tbody>
     </table>
-    <h2 class="mt-5">ABC Preview</h2>
-    <div id="abc"></div>
-    <script>
-        // Render full ABC preview at bottom
-        window.onload = function() {{
-            const abc = `{abc_preview}`;
-            if (window.ABCJS && ABCJS.renderAbc) {{
-                ABCJS.renderAbc("abc", abc);
-            }}
-        }};
-    </script>
+
     <script>
         // Tooltip behavior for chord hover
         document.addEventListener('DOMContentLoaded', () => {{
