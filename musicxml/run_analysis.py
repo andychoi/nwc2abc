@@ -39,16 +39,18 @@ def main():
     include_piano = '--include-piano' in sys.argv
 
     musicxml_path = convert_if_nwc(path)
+    out_dir = os.path.dirname(os.path.abspath(path))
+    out_path = lambda name: os.path.join(out_dir, name)
 
-    # Pass a flag into each analyzer if needed — adjust analyzers to accept this if required
+    # Adjusted analyzer calls
     if mode == "vocal":
-        analyze_vocal(musicxml_path, use_full_score_chords=use_full_score_chords)
+        analyze_vocal(musicxml_path, use_full_score_chords=use_full_score_chords, report_path=out_path("vocal_report.html"))
     elif mode == "instrumental":
-        analyze_instrumental(musicxml_path, use_full_score_chords=use_full_score_chords, exclude_piano=not include_piano)
+        analyze_instrumental(musicxml_path, use_full_score_chords=use_full_score_chords, exclude_piano=not include_piano, report_path=out_path("instrumental_report.html"))
     elif mode == "combined":
-        analyze_combined(musicxml_path, use_full_score_chords=use_full_score_chords)
+        analyze_combined(musicxml_path, use_full_score_chords=use_full_score_chords, report_path=out_path("combined_report.html"))
     elif mode == "style":
-        analyze_style(musicxml_path)
+        analyze_style(musicxml_path, report_path=out_path("style_report.html"))
     else:
         print("Unknown mode. Use 'vocal', 'instrumental', 'combined', or 'style'")
         sys.exit(1)

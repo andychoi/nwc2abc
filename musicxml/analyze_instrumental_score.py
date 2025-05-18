@@ -44,7 +44,7 @@ def analyze_multistaff_harmony(part, instrument_name, issues_by_measure):
             except:
                 continue
 
-def analyze_instrumental(filepath, use_full_score_chords=False, exclude_piano=True):
+def analyze_instrumental(filepath, use_full_score_chords=False, exclude_piano=True,  report_path=None):
     score = converter.parse(filepath)
     key = detect_key(score)
     chords = get_chords(score, use_full_score=use_full_score_chords)
@@ -104,7 +104,7 @@ def analyze_instrumental(filepath, use_full_score_chords=False, exclude_piano=Tr
     render_html_report(
         issues_by_measure,
         part_names,
-        "report/instrumental_report.html",
+        report_path,
         chords_by_measure=chords_by_measure,
         abc_key=key,
         keys_by_measure=keys_by_measure,

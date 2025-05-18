@@ -7,7 +7,7 @@ from common.harmony_utils import detect_key, get_chords, extract_keys_by_measure
 import re
 import os
 
-def analyze_style(filepath):
+def analyze_style(filepath, report_path=None):
     score = converter.parse(filepath)
     raw_adv = style_advice(score)
     vocal_parts, instr_parts = classify_parts(score)
@@ -41,8 +41,6 @@ def analyze_style(filepath):
         for part in part_names:
             issues_by_measure.setdefault(1, {}).setdefault(part, []).append(adv)
 
-    os.makedirs("report", exist_ok=True)
-    report_path = "report/style_report.html"
     key = detect_key(score)
     chords_by_measure = get_chords(score, use_full_score=True, merge_same_chords=True, key=key)
     keys_by_measure = extract_keys_by_measure(score)

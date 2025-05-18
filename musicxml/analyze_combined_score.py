@@ -4,7 +4,7 @@ from common.part_utils import classify_parts
 from common.harmony_utils import detect_key, get_chords, analyze_chord_progression, extract_keys_by_measure, extract_meters_by_measure
 from common.html_report import render_html_report
 
-def analyze_combined(filepath, use_full_score_chords=False):
+def analyze_combined(filepath, use_full_score_chords=False, report_path=None):
     score = converter.parse(filepath)
     vocal_parts, instrumental_parts = classify_parts(score)
     part_names = [p.partName for p in (vocal_parts + instrumental_parts)]
@@ -72,7 +72,7 @@ def analyze_combined(filepath, use_full_score_chords=False):
     render_html_report(
         issues_by_measure,
         part_names,
-        "report/combined_report.html",
+        report_path,
         chords_by_measure=chords_by_measure,
         abc_key=key,
         keys_by_measure=key_changes,

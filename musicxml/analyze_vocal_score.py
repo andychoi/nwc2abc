@@ -15,7 +15,7 @@ def is_note_out_of_range(n, part_name):
     low, high = pitch.Pitch(vocal_ranges[part_name][0]), pitch.Pitch(vocal_ranges[part_name][1])
     return n.pitch < low or n.pitch > high
 
-def analyze_vocal(filepath, use_full_score_chords=True):
+def analyze_vocal(filepath, use_full_score_chords=True, report_path=None):
     score = converter.parse(filepath)
     key = detect_key(score)
     chords = get_chords(score, use_full_score=use_full_score_chords)
@@ -94,7 +94,7 @@ def analyze_vocal(filepath, use_full_score_chords=True):
     render_html_report(
         issues_by_measure,
         voice_labels,
-        "report/vocal_report.html",
+        report_path,
         chords_by_measure=chords_by_measure,
         abc_key=key, 
         keys_by_measure=keys_by_measure,
