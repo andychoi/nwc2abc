@@ -1,5 +1,6 @@
+# analyze_instrumental_score.py
 from music21 import converter, note, pitch, interval, roman
-from common.harmony_utils import detect_key, get_chords, analyze_chord_progression
+from common.harmony_utils import detect_key, get_chords, analyze_chord_progression, extract_keys_by_measure, extract_meters_by_measure
 from common.html_report import render_html_report
 from common.part_utils import classify_parts
 
@@ -52,29 +53,14 @@ def analyze_instrumental(filepath, use_full_score_chords=False, exclude_piano=Tr
     issues_by_measure = {}
     chords_by_measure = get_chords(score, use_full_score=True, merge_same_chords=True, key=key)
     part_names = []
-
-    # Build chords by measure
-    for m in chords_by_measure:
-        for c, dur in chords_by_measure[m]:
-            try:
-                rn = roman.romanNumeralFromChord(c, key)
-                m = int(c.measureNumber) if hasattr(c, 'measureNumber') else int(c.offset)
-                chords_by_measure.setdefault(m, []).append((rn.figure, dur))
-            except:
-                continue
-
-    # Filter out vocal parts
-    # instrumental_parts = [p for p in score.parts if get_instrument_name(p) not in VOCAL_PART_NAMES]
     vocal_parts, instrumental_parts = classify_parts(score, exclude_piano)
 
     if not instrumental_parts:
         print("No instrumental parts found.")
         return
 
-    # Identify topmost instrumental part as melody (like soprano)
     melody_part = instrumental_parts[0]
 
-    # Collect part names and perform range & multistaff checks
     for part in instrumental_parts:
         name = get_instrument_name(part)
         part_names.append(name)
@@ -88,11 +74,10 @@ def analyze_instrumental(filepath, use_full_score_chords=False, exclude_piano=Tr
         if len(staff_ids) >= 2:
             analyze_multistaff_harmony(part, name, issues_by_measure)
 
-    # Analyze dissonance and doubling vs. melody part
     measures = melody_part.getElementsByClass('Measure')
     max_m = max((m.measureNumber for m in measures), default=0)
 
-    for part in instrumental_parts[1:]:  # skip melody itself
+    for part in instrumental_parts[1:]:
         name = get_instrument_name(part)
         for m in range(1, max_m + 1):
             melody_measure = melody_part.measure(m)
@@ -108,18 +93,21 @@ def analyze_instrumental(filepath, use_full_score_chords=False, exclude_piano=Tr
                     if iv.semitones == 0:
                         issues_by_measure.setdefault(m, {}).setdefault(name, []).append(f"doubled {mn.nameWithOctave}")
 
-    # Mark chord progression issues under melody part
     for offset, issue in progression_issues:
         m = int(offset)
         name = get_instrument_name(melody_part)
         issues_by_measure.setdefault(m, {}).setdefault(name, []).append("prog")
 
-    # Emit report
+    keys_by_measure = extract_keys_by_measure(score)
+    meters_by_measure = extract_meters_by_measure(score)
+
     render_html_report(
         issues_by_measure,
         part_names,
         "report/instrumental_report.html",
         chords_by_measure=chords_by_measure,
-        abc_key=key
+        abc_key=key,
+        keys_by_measure=keys_by_measure,
+        meters_by_measure=meters_by_measure
     )
     print("Instrumental harmony analysis complete. Output: instrumental_report.html")

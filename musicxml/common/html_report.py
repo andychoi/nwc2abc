@@ -8,12 +8,12 @@ default_key = m21key.Key('C')
 
 # HTML template with tooltip support for ABC hover
 html_template = """<!DOCTYPE html>
-<html lang="en">
+<html lang=\"en\">
 <head>
-    <meta charset="UTF-8">
+    <meta charset=\"UTF-8\">
     <title>Harmony Analysis Report</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/abcjs@6.4.0/dist/abcjs-basic-min.js"></script>
+    <link href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css\" rel=\"stylesheet\">
+    <script src=\"https://cdn.jsdelivr.net/npm/abcjs@6.4.0/dist/abcjs-basic-min.js\"></script>
     <style>
         .ok {{ background-color: #e9fce9; }}
         .voicing {{ background-color: #fff3cd; color: #856404; }}
@@ -34,10 +34,10 @@ html_template = """<!DOCTYPE html>
         }}
     </style>
 </head>
-<body class="container my-4">
-    <h1 class="mb-4">Harmony Analysis Report</h1>
-    <table class="table table-bordered table-sm">
-        <thead class="table-light">
+<body class=\"container my-4\">
+    <h1 class=\"mb-4\">Harmony Analysis Report</h1>
+    <table class=\"table table-bordered table-sm\">
+        <thead class=\"table-light\">
             <tr>
                 <th>Measure</th><th>Chord</th>{columns}
             </tr>
@@ -81,7 +81,6 @@ html_template = """<!DOCTYPE html>
 from fractions import Fraction
 
 def duration_to_abc_suffix(duration):
-    """Convert duration (in quarterLength) to ABC notation suffix (e.g. 0.5 → '/2', 2.0 → '8')"""
     f = Fraction(duration).limit_denominator(16)
     num, denom = f.numerator, f.denominator
     if denom == 1:
@@ -89,7 +88,7 @@ def duration_to_abc_suffix(duration):
     elif num == 1:
         return f"/{denom // 1}" if denom in [2, 4, 8, 16] else ""
     else:
-        return ""  # Simplify, or support dotted notes if needed
+        return ""
 
 def classify_issue(issue_text):
     it = issue_text.lower()
@@ -98,7 +97,6 @@ def classify_issue(issue_text):
     if "doubled" in it:
         return "doubling"
     return "voicing"
-
 
 def recommend_fix(issue_text):
     it = issue_text.lower()
@@ -131,12 +129,13 @@ def recommend_fix(issue_text):
         return f"V→I in ABC: {dominant} {dominant} {dominant}| {tonic} {tonic} {tonic}"
     return "Review harmonic context."
 
+def render_html_report(issues_by_measure, part_names, output_path, chords_by_measure=None, abc_key=None, keys_by_measure=None, meters_by_measure=None):
+    from music21 import roman
+    from common.abc_utils import pitch_to_abc
+    import html
 
-def render_html_report(issues_by_measure, part_names, output_path, chords_by_measure=None, abc_key=None):
-    # ── Dedupe identical issue strings per measure/part ──
     for m, parts in issues_by_measure.items():
         for part, issues in parts.items():
-            # keep only the first occurrence of each issue text
             seen = set()
             deduped = []
             for txt in issues:
@@ -144,49 +143,42 @@ def render_html_report(issues_by_measure, part_names, output_path, chords_by_mea
                     seen.add(txt)
                     deduped.append(txt)
             issues_by_measure[m][part] = deduped
-            
-    # Build columns and rows
+
     columns_html = ''.join(f'<th>{part}</th>' for part in part_names)
     rows_html = []
     all_abc = []
-
     all_measures = set(issues_by_measure.keys())
     if chords_by_measure:
         all_measures.update(chords_by_measure.keys())
 
     for m in sorted(all_measures):
         chords = chords_by_measure.get(m, []) if chords_by_measure else []
-        labels = ", ".join(
-            roman.romanNumeralFromChord(c[0], abc_key).figure if isinstance(c, tuple) else str(c)
-            for c in chords if isinstance(c[0], chord.Chord) and c[0].pitches
-        )
-
+        labels = ", ".join(rn_fig for (rn_fig, _) in chords if isinstance(rn_fig, str))
         data_abc = ""
         if abc_key and chords:
             parts = []
-            for c in chords:
+            for rn_fig, duration in chords:
                 try:
-                    if isinstance(c, tuple):
-                        rn_fig, duration = c
-                    else:
-                        rn_fig, duration = c, 1.0
-
-                    print(f"[DEBUG] Rendering RomanNumeral {rn_fig} in key {abc_key}")
                     obj = roman.RomanNumeral(rn_fig, abc_key)
                     pitches = [pitch_to_abc(p, abc_key) for p in obj.pitches]
-                    
-                    # print(f"Measure {m}, Chord {rn_fig}: duration = {duration}")
                     dur = duration_to_abc_suffix(duration)
-
                     parts.append(f'"{rn_fig}" [{" ".join(pitches)}]{dur}')
-                except:
+                except Exception as e:
+                    print(f"[WARN] ABC render failed for {rn_fig}: {e}")
                     parts.append('"?" z')
-            data_abc = " ".join(parts)
+            k = keys_by_measure.get(m, abc_key) if keys_by_measure else abc_key
+            abc_key_header = f'K:{k.tonic.name}m' if k.mode == 'minor' else f'K:{k.tonic.name}'
+            meter_str = meters_by_measure.get(m, "4/4") if meters_by_measure else "4/4"
+            meter_header = f"M:{meter_str}"
+            data_abc = f'X:1\nT:Measure {m}\n{abc_key_header}\n{meter_header}\n' + " ".join(parts)
             all_abc.append(data_abc)
 
-        hover_div = f'<div class="abc-hover" data-abc="{html.escape(data_abc)}">{labels}</div>' if labels else ''
-
-        cells = [f'<td>{m}</td>', f'<td>{hover_div}</td>']
+        hover_div = f'<div class="abc-hover" data-abc="{html.escape(data_abc)}">{labels}</div>' if labels else ""
+        key_label = ""
+        if keys_by_measure and m in keys_by_measure:
+            k = keys_by_measure[m]
+            key_label = f"{k.tonic.name} {'major' if k.mode == 'major' else 'minor'}"
+        cells = [f'<td><div><b>{m}</b><br><small>{key_label}</small></div></td>', f'<td>{hover_div}</td>']
         for part in part_names:
             issues = issues_by_measure.get(m, {}).get(part, [])
             if not issues:
@@ -207,7 +199,6 @@ def render_html_report(issues_by_measure, part_names, output_path, chords_by_mea
 
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(full_html)
-
 
 def render_style_report(issues_by_measure, part_names, output_path, chords_by_measure=None, abc_key=None):
     render_html_report(issues_by_measure, part_names, output_path, chords_by_measure, abc_key)

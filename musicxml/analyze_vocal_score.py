@@ -1,5 +1,5 @@
 from music21 import converter, interval, note, pitch, roman
-from common.harmony_utils import detect_key, get_chords, analyze_chord_progression
+from common.harmony_utils import detect_key, get_chords, extract_keys_by_measure, extract_meters_by_measure, analyze_chord_progression
 from common.html_report import render_html_report
 
 vocal_ranges = {
@@ -23,17 +23,6 @@ def analyze_vocal(filepath, use_full_score_chords=True):
     progression_issues = analyze_chord_progression(chords, key)
 
     chords_by_measure = get_chords(score, use_full_score=True, merge_same_chords=True, key=key)
-    for m in chords_by_measure:
-        for c, dur in chords_by_measure[m]:
-            try:
-                if not c.pitches or c.root() is None:
-                    raise ValueError("Chord has no valid root")                
-                rn = roman.romanNumeralFromChord(c, key)    # not string, # for Chord object
-                m = int(c.measureNumber) if hasattr(c, 'measureNumber') else int(c.offset)
-                chords_by_measure.setdefault(m, []).append((rn.figure, dur))
-            except Exception as e:
-                print(f"[WARN] Failed to create RomanNumeral for chord {c}: {e}")
-                continue
 
     voice_labels = ['Soprano', 'Alto', 'Tenor', 'Bass']
     voices = [list(score.parts[i].recurse().notes) for i in range(min(4, len(score.parts)))]
@@ -99,11 +88,16 @@ def analyze_vocal(filepath, use_full_score_chords=True):
         m = int(offset)
         issues_by_measure.setdefault(m, {}).setdefault("Soprano", []).append(issue)
 
+    keys_by_measure = extract_keys_by_measure(score)
+    meters_by_measure = extract_meters_by_measure(score)
+
     render_html_report(
         issues_by_measure,
         voice_labels,
         "report/vocal_report.html",
         chords_by_measure=chords_by_measure,
-        abc_key=key
+        abc_key=key, 
+        keys_by_measure=keys_by_measure,
+        meters_by_measure=meters_by_measure
     )
     print("Vocal harmony analysis complete. Output: vocal_report.html")

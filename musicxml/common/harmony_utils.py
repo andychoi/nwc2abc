@@ -1,8 +1,49 @@
 # common/harmony_utils.py
-from music21 import analysis, chord, roman, key as key_module, meter
+from music21 import analysis, chord, roman, key as m21key, meter, stream
 
 def detect_key(score):
     return score.analyze('key')
+
+def extract_keys_by_measure(score_stream: stream.Score) -> dict:
+    """
+    Extracts the most recent key signature for each measure in the score.
+
+    Returns:
+        Dict[int, key.Key]: mapping from measure number to Key object
+    """
+    keys_by_measure = {}
+    current_key = None
+
+    for part in score_stream.parts:
+        for measure in part.getElementsByClass('Measure'):
+            ksigs = [el for el in measure if isinstance(el, m21key.KeySignature)]
+            if ksigs:
+                current_key = ksigs[0].asKey()
+            if current_key:
+                keys_by_measure[int(measure.measureNumber)] = current_key
+        break  # Only use the first part
+    return keys_by_measure
+
+def extract_meters_by_measure(score_stream: stream.Score) -> dict:
+    """
+    Extracts the active time signature for each measure.
+    Returns:
+        Dict[int, str]: measure number → time signature (e.g., "3/4")
+    """
+    meters_by_measure = {}
+    current_ts = "4/4"
+
+    for part in score_stream.parts:
+        measures = part.getElementsByClass('Measure')
+        for measure in measures:
+            m_num = int(measure.measureNumber)
+            tsigs = measure.getTimeSignatures()
+            if tsigs:
+                current_ts = tsigs[0].ratioString
+            meters_by_measure[m_num] = current_ts
+        break  # Only use the first part
+    return meters_by_measure
+
 
 def find_piano_part(score):
     for part in score.parts:
