@@ -71,16 +71,17 @@ def reharmonization_advice(score, use_full_score_chords=False):
     advice = []
     key = detect_key(score)
     chords = get_chords(score, use_full_score=use_full_score_chords)
-    for c in chords:
-        try:
-            rn = m21key.roman.romanNumeralFromChord(c, key)
-            if rn.degree not in (5,):
-                sec = key.pitchFromDegree(5).transpose((rn.degree-1)*7)  # V of that degree
-                advice.append(
-                    f"At offset {c.offset:.1f}: try secondary dominant {pitch_to_abc(sec)} for {rn.figure}"
-                )
-        except:
-            continue
+    for m in chords_by_measure:
+        for c, dur in chords_by_measure[m]:
+            try:
+                rn = m21key.roman.romanNumeralFromChord(c, key)
+                if rn.degree not in (5,):
+                    sec = key.pitchFromDegree(5).transpose((rn.degree-1)*7)  # V of that degree
+                    advice.append(
+                        f"At offset {c.offset:.1f}: try secondary dominant {pitch_to_abc(sec)} for {rn.figure}"
+                    )
+            except:
+                continue
     return advice
 
 def style_advice(score):

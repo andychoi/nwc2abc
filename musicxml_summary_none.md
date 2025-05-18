@@ -2,13 +2,12 @@
 
 ## `analyze_combined_score.py`
 ```python
-# musicxml/analyze_combined_score.py
-
-from music21 import converter, interval, note
+from music21 import converter, interval, note, roman
 from common.part_utils import classify_parts
+from common.harmony_utils import detect_key, get_chords, analyze_chord_progression
 from common.html_report import render_html_report
 
-def analyze_combined(filepath):
+def analyze_combined(filepath, use_full_score_chords=False):
     # 1) Parse
     score = converter.parse(filepath)
 
@@ -19,48 +18,39 @@ def analyze_combined(filepath):
 
     # --- SATB crossing & spacing ---
     for i in range(3):
-        if i+1 >= len(vocal_parts):
+        if i + 1 >= len(vocal_parts):
             break
         up_part = vocal_parts[i]
-        lo_part = vocal_parts[i+1]
+        lo_part = vocal_parts[i + 1]
         up_notes = [n for n in up_part.recurse().notes if isinstance(n, note.Note)]
         lo_notes = [n for n in lo_part.recurse().notes if isinstance(n, note.Note)]
         for un, ln in zip(up_notes, lo_notes):
             m = int(un.measureNumber)
-            # voice crossing
             if ln.pitch > un.pitch:
-                issues_by_measure.setdefault(m, {}) \
-                                 .setdefault(lo_part.partName, []) \
-                                 .append("crossing")
-            # spacing > octave
+                issues_by_measure.setdefault(m, {}).setdefault(lo_part.partName, []).append("crossing")
             iv = interval.Interval(ln, un)
             if iv.semitones > 12:
-                issues_by_measure.setdefault(m, {}) \
-                                 .setdefault(up_part.partName, []) \
-                                 .append("spacing")
+                issues_by_measure.setdefault(m, {}).setdefault(up_part.partName, []).append("spacing")
 
     # --- Parallel 5ths/8ves ---
     for i in range(len(vocal_parts)):
-        for j in range(i+1, len(vocal_parts)):
+        for j in range(i + 1, len(vocal_parts)):
             p1, p2 = vocal_parts[i], vocal_parts[j]
             n1s = [n for n in p1.recurse().notes if isinstance(n, note.Note)]
             n2s = [n for n in p2.recurse().notes if isinstance(n, note.Note)]
-            for a, b in zip(n1s, n2s):
+            for idx, (a, b) in enumerate(zip(n1s, n2s)):
                 iv = interval.Interval(a, b)
                 if iv.simpleName in ('P5', 'P8'):
-                    idx1, idx2 = n1s.index(a), n2s.index(b)
-                    if idx1+1 < len(n1s) and idx2+1 < len(n2s):
-                        nxt = interval.Interval(n1s[idx1+1], n2s[idx2+1])
+                    if idx + 1 < len(n1s) and idx + 1 < len(n2s):
+                        nxt = interval.Interval(n1s[idx + 1], n2s[idx + 1])
                         if nxt.simpleName == iv.simpleName:
                             m = int(a.measureNumber)
-                            issues_by_measure.setdefault(m, {}) \
-                                             .setdefault(p1.partName, []) \
-                                             .append(f"parallel {iv.simpleName}")
+                            issues_by_measure.setdefault(m, {}).setdefault(p1.partName, []).append(f"parallel {iv.simpleName}")
 
     # --- Vocal vs. Instrument dissonance & doubling ---
     measures = score.parts[0].getElementsByClass('Measure')
     max_m = max(m.measureNumber for m in measures)
-    for m in range(1, max_m+1):
+    for m in range(1, max_m + 1):
         vnotes, inotes = [], []
         for part in vocal_parts:
             m_el = part.measure(m)
@@ -71,26 +61,45 @@ def analyze_combined(filepath):
         for vn in vnotes:
             for ino in inotes:
                 iv = interval.Interval(vn, ino)
-                # dissonance = not consonant
                 if not iv.isConsonant():
-                    issues_by_measure.setdefault(m, {}) \
-                                     .setdefault(vn.getContextByClass('Part').partName, []) \
-                                     .append(f"dissonance with {ino.nameWithOctave}")
-                # exact doubling
+                    issues_by_measure.setdefault(m, {}).setdefault(vn.getContextByClass('Part').partName, []).append(f"dissonance with {ino.nameWithOctave}")
                 if iv.semitones == 0:
-                    issues_by_measure.setdefault(m, {}) \
-                                     .setdefault(vn.getContextByClass('Part').partName, []) \
-                                     .append(f"doubled in {ino.getContextByClass('Part').partName}")
+                    issues_by_measure.setdefault(m, {}).setdefault(vn.getContextByClass('Part').partName, []).append(f"doubled in {ino.getContextByClass('Part').partName}")
+
+    # --- Chord analysis ---
+    key = detect_key(score)
+    chords = get_chords(score, use_full_score=use_full_score_chords)
+    chords_by_measure = {}
+    prog_issues = analyze_chord_progression(chords, key)
+
+    for c in chords:
+        try:
+            rn = roman.romanNumeralFromChord(c, key)
+            m = int(c.measureNumber) if hasattr(c, 'measureNumber') else int(c.offset)
+            chords_by_measure.setdefault(m, []).append(rn.figure)
+        except:
+            continue
+
+    for offset, issue in prog_issues:
+        m = int(offset)
+        if vocal_parts:
+            issues_by_measure.setdefault(m, {}).setdefault(vocal_parts[0].partName, []).append("prog")
 
     # 4) Emit report
-    render_html_report(issues_by_measure, part_names, "report/combined_report.html")
+    render_html_report(
+        issues_by_measure,
+        part_names,
+        "report/combined_report.html",
+        chords_by_measure=chords_by_measure,
+        abc_key=key
+    )
     print("Combined analysis complete → combined_report.html")
 
 ```
 
 ## `analyze_instrumental_score.py`
 ```python
-from music21 import converter, note, pitch, interval
+from music21 import converter, note, pitch, interval, roman
 from common.harmony_utils import detect_key, get_chords, analyze_chord_progression
 from common.html_report import render_html_report
 
@@ -100,6 +109,8 @@ instrument_ranges = {
     'Cello': ('C2', 'G5'),
     'Piano': ('A0', 'C8'),
 }
+
+VOCAL_PART_NAMES = {'Soprano', 'Alto', 'Tenor', 'Bass'}
 
 def get_instrument_name(part):
     instr = part.getInstrument(returnDefault=True)
@@ -132,45 +143,93 @@ def analyze_multistaff_harmony(part, instrument_name, issues_by_measure):
             except:
                 continue
 
-def analyze_instrumental(filepath):
+def analyze_instrumental(filepath, use_full_score_chords=False):
     score = converter.parse(filepath)
     key = detect_key(score)
     chords = get_chords(score, use_full_score=use_full_score_chords)
     progression_issues = analyze_chord_progression(chords, key)
 
     issues_by_measure = {}
+    chords_by_measure = {}
     part_names = []
 
-    for part in score.parts:
+    # Build chords by measure
+    for c in chords:
+        try:
+            rn = roman.romanNumeralFromChord(c, key)
+            m = int(c.measureNumber) if hasattr(c, 'measureNumber') else int(c.offset)
+            chords_by_measure.setdefault(m, []).append(rn.figure)
+        except:
+            continue
+
+    # Filter out vocal parts
+    instrumental_parts = [p for p in score.parts if get_instrument_name(p) not in VOCAL_PART_NAMES]
+
+    if not instrumental_parts:
+        print("No instrumental parts found.")
+        return
+
+    # Identify topmost instrumental part as melody (like soprano)
+    melody_part = instrumental_parts[0]
+
+    # Collect part names and perform range & multistaff checks
+    for part in instrumental_parts:
         name = get_instrument_name(part)
         part_names.append(name)
-        for n in part.flat.notes:
+
+        for n in part.flatten().notes:
             if is_note_out_of_range(n, name):
                 m = int(n.measureNumber)
                 issues_by_measure.setdefault(m, {}).setdefault(name, []).append("range")
 
-        staff_count = set(getattr(n, 'staff', 1) for n in part.recurse().notes)
-        if len(staff_count) >= 2:
+        staff_ids = set(getattr(n, 'staff', 1) for n in part.recurse().notes)
+        if len(staff_ids) >= 2:
             analyze_multistaff_harmony(part, name, issues_by_measure)
 
+    # Analyze dissonance and doubling vs. melody part
+    measures = melody_part.getElementsByClass('Measure')
+    max_m = max((m.measureNumber for m in measures), default=0)
+
+    for part in instrumental_parts[1:]:  # skip melody itself
+        name = get_instrument_name(part)
+        for m in range(1, max_m + 1):
+            melody_measure = melody_part.measure(m)
+            inst_measure = part.measure(m)
+            m_notes = [n for n in melody_measure.notes if isinstance(n, note.Note)] if melody_measure else []
+            i_notes = [n for n in inst_measure.notes if isinstance(n, note.Note)] if inst_measure else []
+
+            for mn in m_notes:
+                for inote in i_notes:
+                    iv = interval.Interval(mn, inote)
+                    if not iv.isConsonant():
+                        issues_by_measure.setdefault(m, {}).setdefault(name, []).append(f"dissonance with {mn.nameWithOctave}")
+                    if iv.semitones == 0:
+                        issues_by_measure.setdefault(m, {}).setdefault(name, []).append(f"doubled {mn.nameWithOctave}")
+
+    # Mark chord progression issues under melody part
     for offset, issue in progression_issues:
         m = int(offset)
-        if part_names:
-            issues_by_measure.setdefault(m, {}).setdefault(part_names[0], []).append("prog")
+        name = get_instrument_name(melody_part)
+        issues_by_measure.setdefault(m, {}).setdefault(name, []).append("prog")
 
-    render_html_report(issues_by_measure, part_names, "report/instrumental_report.html")
+    # Emit report
+    render_html_report(
+        issues_by_measure,
+        part_names,
+        "report/instrumental_report.html",
+        chords_by_measure=chords_by_measure,
+        abc_key=key
+    )
     print("Instrumental harmony analysis complete. Output: instrumental_report.html")
 
 ```
 
 ## `analyze_style_score.py`
 ```python
-# musicxml/analyze_style_score.py
-
 from music21 import converter
 from common.style_advisor import style_advice
 from common.part_utils import classify_parts
-from common.html_report import render_style_report
+from common.html_report import render_html_report
 import re
 import os
 
@@ -220,17 +279,16 @@ def analyze_style(filepath):
     # 4) Output HTML
     os.makedirs("report", exist_ok=True)
     report_path = "report/style_report.html"
-    render_style_report(issues_by_measure, part_names, report_path)
+    render_html_report(issues_by_measure, part_names, report_path)
     print(f"Style report written to {report_path}")
 
 ```
 
 ## `analyze_vocal_score.py`
 ```python
-from music21 import converter, interval, note, pitch
+from music21 import converter, interval, note, pitch, roman
 from common.harmony_utils import detect_key, get_chords, analyze_chord_progression
 from common.html_report import render_html_report
-import os
 
 vocal_ranges = {
     'Soprano': ('C4', 'G5'),
@@ -245,11 +303,21 @@ def is_note_out_of_range(n, part_name):
     low, high = pitch.Pitch(vocal_ranges[part_name][0]), pitch.Pitch(vocal_ranges[part_name][1])
     return n.pitch < low or n.pitch > high
 
-def analyze_vocal(filepath):
+def analyze_vocal(filepath, use_full_score_chords=True):
     score = converter.parse(filepath)
     key = detect_key(score)
     chords = get_chords(score, use_full_score=use_full_score_chords)
+    # print(f"[DEBUG] Found {len(chords)} chords")
     progression_issues = analyze_chord_progression(chords, key)
+
+    chords_by_measure = {}
+    for c in chords:
+        try:
+            rn = roman.romanNumeralFromChord(c, key)
+            m = int(c.measureNumber) if hasattr(c, 'measureNumber') else int(c.offset)
+            chords_by_measure.setdefault(m, []).append(rn.figure)
+        except Exception as e:
+            print(f"[WARN] Failed to create RomanNumeral for chord {c}: {e}")
 
     voice_labels = ['Soprano', 'Alto', 'Tenor', 'Bass']
     voices = [list(score.parts[i].recurse().notes) for i in range(min(4, len(score.parts)))]
@@ -295,27 +363,33 @@ def analyze_vocal(filepath):
         for j in range(i+1, 4):
             v1 = voices[i]
             v2 = voices[j]
-            for n1, n2 in zip(v1, v2):
+            for idx, (n1, n2) in enumerate(zip(v1, v2)):
                 if not isinstance(n1, note.Note) or not isinstance(n2, note.Note):
                     continue
                 try:
                     intvl = interval.Interval(n1, n2)
                     if intvl.simpleName in ['P5', 'P8']:
-                        next1 = v1[v1.index(n1)+1] if v1.index(n1)+1 < len(v1) else None
-                        next2 = v2[v2.index(n2)+1] if v2.index(n2)+1 < len(v2) else None
-                        if isinstance(next1, note.Note) and isinstance(next2, note.Note):
-                            next_intvl = interval.Interval(next1, next2)
-                            if next_intvl.simpleName == intvl.simpleName:
-                                m = int(n1.measureNumber)
-                                issues_by_measure.setdefault(m, {}).setdefault(voice_labels[i], []).append(f"parallel {intvl.simpleName}")
+                        if idx + 1 < len(v1) and idx + 1 < len(v2):
+                            next1, next2 = v1[idx+1], v2[idx+1]
+                            if isinstance(next1, note.Note) and isinstance(next2, note.Note):
+                                next_intvl = interval.Interval(next1, next2)
+                                if next_intvl.simpleName == intvl.simpleName:
+                                    m = int(n1.measureNumber)
+                                    issues_by_measure.setdefault(m, {}).setdefault(voice_labels[i], []).append(f"parallel {intvl.simpleName}")
                 except:
                     continue
 
     for offset, issue in progression_issues:
         m = int(offset)
-        issues_by_measure.setdefault(m, {}).setdefault("Soprano", []).append("prog")
+        issues_by_measure.setdefault(m, {}).setdefault("Soprano", []).append(issue)
 
-    render_html_report(issues_by_measure, voice_labels, "report/vocal_report.html", chords_by_measure=chords_by_measure, abc_key=key)
+    render_html_report(
+        issues_by_measure,
+        voice_labels,
+        "report/vocal_report.html",
+        chords_by_measure=chords_by_measure,
+        abc_key=key
+    )
     print("Vocal harmony analysis complete. Output: vocal_report.html")
 
 ```
@@ -328,7 +402,7 @@ from music21 import pitch, key
 
 def pitch_to_abc(m21_pitch: pitch.Pitch, key_sig: key.Key = None) -> str:
     step = m21_pitch.step
-    octave = m21_pitch.octave
+    octave = m21_pitch.octave if m21_pitch.octave is not None else 4  # Default to octave 4 if missing
     acc_token = ""
 
     if m21_pitch.accidental:
@@ -358,8 +432,30 @@ from music21 import analysis, chord, roman, key as key_module
 def detect_key(score):
     return score.analyze('key')
 
-def get_chords(score):
-    return score.chordify().recurse().getElementsByClass('Chord')
+def find_piano_part(score):
+    for part in score.parts:
+        name = (part.partName or '').lower()
+        instr = part.getInstrument(returnDefault=True)
+        if "piano" in name or "piano" in str(instr).lower():
+            return part
+    return None
+
+def get_chords(score, use_full_score=False):
+    """
+    Return chords per measure based on:
+    - Piano part if available (default)
+    - Full score chordify if `use_full_score=True`
+    """
+    part = None
+    if use_full_score:
+        part = score.chordify()
+    else:
+        part = find_piano_part(score)
+        if not part:
+            print("[WARN] No piano part found. Falling back to full score chordify.")
+            part = score.chordify()
+
+    return part.recurse().getElementsByClass('Chord')
 
 def analyze_chord_progression(chords, key):
     """
@@ -371,7 +467,7 @@ def analyze_chord_progression(chords, key):
     issues = []
     prev_rn = None
 
-    parallel_key = key.parallelKey
+    parallel_key = key.parallel
     for c in chords:
         if not c.pitches:
             continue
@@ -453,19 +549,19 @@ def suggest_reharmonizations(chords, key):
 # common/html_report.py
 
 from common.abc_utils import pitch_to_abc
-from music21 import roman
-from music21 import pitch as m21pitch, key as m21key
+from music21 import roman, pitch as m21pitch, key as m21key
+import html
 
-# You can change this to whatever key the piece is in:
 default_key = m21key.Key('C')
 
+# HTML template with tooltip support for ABC hover
 html_template = """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>Harmony Analysis Report</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <script src=\"https://cdn.jsdelivr.net/npm/abcjs@6.4.0/dist/abcjs-basic-min.js\"></script>
+    <script src="https://cdn.jsdelivr.net/npm/abcjs@6.4.0/dist/abcjs-basic-min.js"></script>
     <style>
         .ok {{ background-color: #e9fce9; }}
         .voicing {{ background-color: #fff3cd; color: #856404; }}
@@ -475,10 +571,15 @@ html_template = """<!DOCTYPE html>
         .note-issue {{ margin-bottom: 0.5em; }}
         .note-issue b {{ display: block; }}
         .note-issue small {{ font-style: italic; }}
-        .abc-hover {
-            cursor: help;
-            text-decoration: dotted underline;
-        }        
+        .abc-hover {{ cursor: help; text-decoration: dotted underline; }}
+        .abc-tooltip {{
+            position: absolute;
+            background: #fff;
+            border: 1px solid #ccc;
+            padding: 8px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+            z-index: 10000;
+        }}
     </style>
 </head>
 <body class="container my-4">
@@ -486,23 +587,45 @@ html_template = """<!DOCTYPE html>
     <table class="table table-bordered table-sm">
         <thead class="table-light">
             <tr>
-                <th>Measure</th>
-                {columns}
+                <th>Measure</th><th>Chord</th>{columns}
             </tr>
         </thead>
         <tbody>
-            {rows}
+{rows}
         </tbody>
     </table>
-    <h2 class="mt-5">ABC Preview</h2>
-    <div id="abc" class="abc-container"></div>
+
     <script>
-        const abc = `{abc_preview}`;
-        ABCJS.renderAbc("abc", abc);
-    </script>    
+        // Tooltip behavior for chord hover
+        document.addEventListener('DOMContentLoaded', () => {{
+            document.querySelectorAll('.abc-hover').forEach(el => {{
+                el.addEventListener('mouseenter', () => {{
+                    const abc = el.getAttribute('data-abc');
+                    if (!abc) return;
+                    const id = 'tt-' + Math.random().toString(36).substr(2,9);
+                    const tt = document.createElement('div');
+                    tt.id = id;
+                    tt.className = 'abc-tooltip';
+                    document.body.appendChild(tt);
+                    const rect = el.getBoundingClientRect();
+                    tt.style.left = `${{rect.left + window.scrollX}}px`;
+                    tt.style.top = `${{rect.bottom + window.scrollY}}px`;
+                    ABCJS.renderAbc(id, abc);
+                    el._tooltipId = id;
+                }});
+                el.addEventListener('mouseleave', () => {{
+                    if (el._tooltipId) {{
+                        const tt = document.getElementById(el._tooltipId);
+                        if (tt) tt.remove();
+                        el._tooltipId = null;
+                    }}
+                }});
+            }});
+        }});
+    </script>
 </body>
-</html>
-"""
+</html>"""
+
 
 def classify_issue(issue_text):
     it = issue_text.lower()
@@ -512,118 +635,85 @@ def classify_issue(issue_text):
         return "doubling"
     return "voicing"
 
+
 def recommend_fix(issue_text):
     it = issue_text.lower()
-    # 1) Dissonance resolution – pick nearest diatonic step in default_key
     if "dissonance with " in it:
         target = issue_text.split("dissonance with ")[1]
         p = m21pitch.Pitch(target)
         abc_orig = pitch_to_abc(p)
-        # build diatonic candidates for same octave
-        candidates = []
-        for deg in range(1, 8):
-            sp = default_key.pitchFromDegree(deg)
+        candidates = [default_key.pitchFromDegree(d) for d in range(1, 8)]
+        for sp in candidates:
             sp.octave = p.octave
-            candidates.append(sp)
-        # sort by proximity
         candidates.sort(key=lambda sp: abs(sp.midi - p.midi))
-        # avoid the same note
         best = candidates[1] if candidates and candidates[0].midi == p.midi else candidates[0]
         abc_res = pitch_to_abc(best)
-        mode = '' if default_key.mode=='major' else 'm'
-        return (f"Resolve dissonance: change {abc_orig} → {abc_res} "
-                f"({default_key.tonic.name}{mode} scale)")
-
-    # 2) Spacing
+        mode = '' if default_key.mode == 'major' else 'm'
+        return f"Resolve dissonance: change {abc_orig} → {abc_res} ({default_key.tonic.name}{mode} scale)"
     if "spacing" in it:
         return "Reduce to within an octave: e.g., lower upper voice by 8ve (ABC: A→a)."
-
-    # 3) Crossing
     if "crossing" in it:
         return "Maintain voice order: transpose the lower voice down (e.g., ABC: A,)."
-
-    # 4) Parallel fifth
     if "parallel p5" in it:
         return "Break parallel 5th: insert passing tone in one voice (e.g., z in ABC)."
-
-    # 5) Parallel octave
     if "parallel p8" in it:
         return "Avoid parallel 8ve: use contrary motion (e.g., step in ABC: c d c)."
-
-    # 6) Doubling
     if "doubled in " in it:
         part = issue_text.split("doubled in ")[1]
-        return (f"Drop duplication in {part} or vary voicing—"
-                f"e.g., use ABC chord [CE] instead of [CC].")
-
-    # 7) Progression
+        return f"Drop duplication in {part} or vary voicing—e.g., use ABC chord [CE] instead of [CC]."
     if "prog" in it:
         tonic = pitch_to_abc(default_key.tonic)
         dominant = pitch_to_abc(default_key.pitchFromDegree(5))
-        return (f"V→I in ABC: {dominant} {dominant} {dominant}| {tonic} {tonic} {tonic}")
-
+        return f"V→I in ABC: {dominant} {dominant} {dominant}| {tonic} {tonic} {tonic}"
     return "Review harmonic context."
 
-def chord_to_abc(roman_str, k):
-    try:
-        rn = roman.romanNumeralFromChord(roman_str, k)
-        root = pitch_to_abc(rn.root(), k)
-        pitches = [pitch_to_abc(p, k) for p in rn.pitches]
-        return f'"{roman_str}" [{ " ".join(pitches) }]'
-    except:
-        return f'"{roman_str}" z'
 
-def render_html_report(issues_by_measure, part_names, output_path):
-    # Build table header
-    columns_html = '<th>Measure</th><th>Chord</th>' + ''.join(f'<th>{part}</th>' for part in part_names)
+def render_html_report(issues_by_measure, part_names, output_path, chords_by_measure=None, abc_key=None):
+    # Build columns and rows
+    columns_html = ''.join(f'<th>{part}</th>' for part in part_names)
+    rows_html = []
+    all_abc = []
 
-    rows = []
-for m in sorted(issues_by_measure.keys()):
-    chords = chords_by_measure.get(m, []) if chords_by_measure else []
-    if isinstance(chords, str):  # Backward compatibility
-        chords = [chords]
-    chord_labels = ", ".join(chords)
+    for m in sorted(issues_by_measure.keys()):
+        chords = chords_by_measure.get(m, []) if chords_by_measure else []
+        if isinstance(chords, str): chords = [chords]
+        labels = ", ".join(chords)
+        data_abc = ""
+        if abc_key and chords:
+            parts = []
+            for rn in chords:
+                try:
+                    obj = roman.RomanNumeral(rn, abc_key)
+                    pitches = [pitch_to_abc(p, abc_key) for p in obj.pitches]
+                    parts.append(f'"{rn}" [{" ".join(pitches)}]')
+                except:
+                    parts.append(f'"{rn}" z')
+            data_abc = " ".join(parts)
+            all_abc.append(data_abc)
+        hover_div = f'<div class="abc-hover" data-abc="{html.escape(data_abc)}">{labels}</div>' if labels else ''
 
-    # ABC hover preview
-    abc_hover = ""
-    if abc_key and chords:
-        abc_lines = [chord_to_abc(rn, abc_key) for rn in chords]
-        abc_preview = " ".join(abc_lines)
-        abc_hover = f'<div class="abc-hover" title="{abc_preview}">{chord_labels}</div>'
-    else:
-        abc_hover = chord_labels
+        cells = [f'<td>{m}</td>', f'<td>{hover_div}</td>']
+        for part in part_names:
+            issues = issues_by_measure.get(m, {}).get(part, [])
+            if not issues:
+                cells.append('<td class="ok">✓</td>')
+            else:
+                inner = ''.join(f'<div class="note-issue {classify_issue(i)}"><b>{i}</b><small>{recommend_fix(i)}</small></div>' for i in issues)
+                cells.append(f'<td>{inner}</td>')
+        rows_html.append('<tr>' + ''.join(cells) + '</tr>')
 
-    cells = [f'<td>{m}</td>', f'<td>{abc_hover}</td>']
-    for part in part_names:
-        issues = issues_by_measure.get(m, {}).get(part, [])
-        if not issues:
-            cells.append('<td class="ok">✓</td>')
-        else:
-            cell_html = []
-            for issue in issues:
-                css = classify_issue(issue)
-                fix = recommend_fix(issue)
-                cell_html.append(
-                    f'<div class="note-issue {css}">'
-                    f'<b>{issue}</b>'
-                    f'<small>{fix}</small>'
-                    f'</div>'
-                )
-            cells.append(f'<td>{"".join(cell_html)}</td>')
-    rows.append('<tr>' + ''.join(cells) + '</tr>')
-
-
-    html = html_template.format(columns=columns_html, rows="\n".join(rows))
+    full_html = html_template.format(
+        columns=columns_html,
+        rows="\n".join(rows_html),
+        abc_preview="\n".join(all_abc)
+    )
     with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(html)
+        f.write(full_html)
 
-def render_style_report(issues_by_measure, part_names, output_path):
-    """
-    Generate a column-per-staff style report exactly like the harmony table.
-    `issues_by_measure` should map measure → part → list of style issues.
-    """
-    # Reuse the same html_template and rendering logic:
-    render_html_report(issues_by_measure, part_names, output_path)
+
+def render_style_report(issues_by_measure, part_names, output_path, chords_by_measure=None, abc_key=None):
+    render_html_report(issues_by_measure, part_names, output_path, chords_by_measure, abc_key)
+
 ```
 
 ## `common/part_utils.py`
@@ -714,7 +804,7 @@ def syncopation_advice(score):
                 advice.append(f"{p.partName}: consider syncopation in measure {m.measureNumber}")
     return advice
 
-def reharmonization_advice(score):
+def reharmonization_advice(score, use_full_score_chords=False):
     """
     Propose secondary dominants for each diatonic chord.
     """
@@ -755,19 +845,20 @@ def style_advice(score):
 
 ## `run_analysis.py`
 ```python
-# musicxml/run_analysis.py
 import sys
 import os
 import tempfile
 import subprocess
+from music21 import converter
 from analyze_vocal_score import analyze_vocal
 from analyze_instrumental_score import analyze_instrumental
 from analyze_combined_score import analyze_combined
-from common.style_advisor import style_advice
-from music21 import converter
+from analyze_style_score import analyze_style
 
 def nwc_to_musicxml_jar(nwc_filepath, script_path='./jar/nwc2xml.sh', output_musicxml_filepath=None):
-    """Wrapper for local shell script conversion to MusicXML."""
+    """
+    Wrapper for local shell script that converts NWCtxt file to MusicXML.
+    """
     if output_musicxml_filepath is None:
         fd, output_musicxml_filepath = tempfile.mkstemp(suffix='.musicxml')
         os.close(fd)
@@ -775,7 +866,7 @@ def nwc_to_musicxml_jar(nwc_filepath, script_path='./jar/nwc2xml.sh', output_mus
         subprocess.run([script_path, nwc_filepath, output_musicxml_filepath], check=True, text=True)
     except subprocess.CalledProcessError as e:
         print(f"[ERROR] Conversion failed: {e}")
-        sys.exit(1)        
+        sys.exit(1)
     return output_musicxml_filepath
 
 def convert_if_nwc(filepath):
@@ -784,24 +875,32 @@ def convert_if_nwc(filepath):
         filepath = nwc_to_musicxml_jar(filepath)
     return filepath
 
-if __name__ == "__main__":
+def main():
     if len(sys.argv) < 3:
-        print("Usage: run_analysis.py [vocal|instrumental] path/to/score")
+        print("Usage: run_analysis.py [vocal|instrumental|combined|style] path/to/score [--full-score-chords]")
         sys.exit(1)
 
-    mode, path = sys.argv[1], sys.argv[2]
+    mode = sys.argv[1]
+    path = sys.argv[2]
+    use_full_score_chords = '--full-score-chords' in sys.argv
+
     musicxml_path = convert_if_nwc(path)
 
+    # Pass a flag into each analyzer if needed — adjust analyzers to accept this if required
     if mode == "vocal":
-        analyze_vocal(musicxml_path)
+        analyze_vocal(musicxml_path, use_full_score_chords=use_full_score_chords)
     elif mode == "instrumental":
-        analyze_instrumental(musicxml_path)
+        analyze_instrumental(musicxml_path, use_full_score_chords=use_full_score_chords)
     elif mode == "combined":
-        score = analyze_combined(musicxml_path)
+        analyze_combined(musicxml_path, use_full_score_chords=use_full_score_chords)
     elif mode == "style":
-        from analyze_style_score import analyze_style
         analyze_style(musicxml_path)
     else:
-        print("Unknown mode. Use 'vocal', 'instrumental', or 'combined'")
+        print("Unknown mode. Use 'vocal', 'instrumental', 'combined', or 'style'")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+
 ```
 

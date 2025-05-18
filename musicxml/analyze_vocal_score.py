@@ -22,14 +22,18 @@ def analyze_vocal(filepath, use_full_score_chords=True):
     # print(f"[DEBUG] Found {len(chords)} chords")
     progression_issues = analyze_chord_progression(chords, key)
 
-    chords_by_measure = {}
-    for c in chords:
-        try:
-            rn = roman.romanNumeralFromChord(c, key)
-            m = int(c.measureNumber) if hasattr(c, 'measureNumber') else int(c.offset)
-            chords_by_measure.setdefault(m, []).append(rn.figure)
-        except Exception as e:
-            print(f"[WARN] Failed to create RomanNumeral for chord {c}: {e}")
+    chords_by_measure = get_chords(score, use_full_score=True, merge_same_chords=True, key=key)
+    for m in chords_by_measure:
+        for c, dur in chords_by_measure[m]:
+            try:
+                if not c.pitches or c.root() is None:
+                    raise ValueError("Chord has no valid root")                
+                rn = roman.romanNumeralFromChord(c, key)    # not string, # for Chord object
+                m = int(c.measureNumber) if hasattr(c, 'measureNumber') else int(c.offset)
+                chords_by_measure.setdefault(m, []).append((rn.figure, dur))
+            except Exception as e:
+                print(f"[WARN] Failed to create RomanNumeral for chord {c}: {e}")
+                continue
 
     voice_labels = ['Soprano', 'Alto', 'Tenor', 'Bass']
     voices = [list(score.parts[i].recurse().notes) for i in range(min(4, len(score.parts)))]

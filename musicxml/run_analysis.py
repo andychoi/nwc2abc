@@ -36,6 +36,7 @@ def main():
     mode = sys.argv[1]
     path = sys.argv[2]
     use_full_score_chords = '--full-score-chords' in sys.argv
+    include_piano = '--include-piano' in sys.argv
 
     musicxml_path = convert_if_nwc(path)
 
@@ -43,7 +44,7 @@ def main():
     if mode == "vocal":
         analyze_vocal(musicxml_path, use_full_score_chords=use_full_score_chords)
     elif mode == "instrumental":
-        analyze_instrumental(musicxml_path, use_full_score_chords=use_full_score_chords)
+        analyze_instrumental(musicxml_path, use_full_score_chords=use_full_score_chords, exclude_piano=not include_piano)
     elif mode == "combined":
         analyze_combined(musicxml_path, use_full_score_chords=use_full_score_chords)
     elif mode == "style":

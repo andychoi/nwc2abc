@@ -65,16 +65,17 @@ def analyze_combined(filepath, use_full_score_chords=False):
     # --- Chord analysis ---
     key = detect_key(score)
     chords = get_chords(score, use_full_score=use_full_score_chords)
-    chords_by_measure = {}
+    chords_by_measure = get_chords(score, use_full_score=True, merge_same_chords=True, key=key)
     prog_issues = analyze_chord_progression(chords, key)
 
-    for c in chords:
-        try:
-            rn = roman.romanNumeralFromChord(c, key)
-            m = int(c.measureNumber) if hasattr(c, 'measureNumber') else int(c.offset)
-            chords_by_measure.setdefault(m, []).append(rn.figure)
-        except:
-            continue
+    for m in chords_by_measure:
+        for c, dur in chords_by_measure[m]:
+            try:
+                rn = roman.romanNumeralFromChord(c, key)
+                m = int(c.measureNumber) if hasattr(c, 'measureNumber') else int(c.offset)
+                chords_by_measure.setdefault(m, []).append((rn.figure, dur))
+            except:
+                continue
 
     for offset, issue in prog_issues:
         m = int(offset)

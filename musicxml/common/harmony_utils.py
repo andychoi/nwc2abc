@@ -1,5 +1,5 @@
 # common/harmony_utils.py
-from music21 import analysis, chord, roman, key as key_module
+from music21 import analysis, chord, roman, key as key_module, meter
 
 def detect_key(score):
     return score.analyze('key')
@@ -12,62 +12,108 @@ def find_piano_part(score):
             return part
     return None
 
-def get_chords(score, use_full_score=False):
+def get_chords(score, use_full_score=False, merge_same_chords=True, key=None):
     """
-    Return chords per measure based on:
-    - Piano part if available (default)
-    - Full score chordify if `use_full_score=True`
+    Return chords_by_measure: Dict[int, List[Tuple[Chord|str, float]]]
+    Ensures every measure is included and padded to match its time signature.
+
+    If merge_same_chords is True, same Roman figures are merged and summed by duration.
     """
-    part = None
+    from music21 import meter, chord
+
     if use_full_score:
         part = score.chordify()
     else:
-        part = find_piano_part(score)
-        if not part:
-            print("[WARN] No piano part found. Falling back to full score chordify.")
-            part = score.chordify()
+        part = find_piano_part(score) or score.chordify()
 
-    return part.recurse().getElementsByClass('Chord')
+    ts = part.recurse().getElementsByClass(meter.TimeSignature).first()
+    measure_length = ts.barDuration.quarterLength if ts else 4.0
 
-def analyze_chord_progression(chords, key):
+    chords_raw = list(part.recurse().getElementsByClass('Chord'))
+    chords_by_measure = {}
+
+    for ch in chords_raw:
+        m = ch.measureNumber
+        dur = float(ch.quarterLength)
+        chords_by_measure.setdefault(m, []).append((ch, dur))
+
+    # Normalize and optionally merge by Roman figure
+    max_measure = max(chords_by_measure.keys(), default=0)
+    normalized = {}
+
+    for m in range(1, max_measure + 1):
+        items = chords_by_measure.get(m, [])
+        total = sum(d for _, d in items)
+        normalized[m] = list(items)
+
+        if total < measure_length:
+            filler = chord.Chord()
+            filler.offset = (m - 1) * measure_length + total
+            normalized[m].append((filler, measure_length - total))
+        elif total > measure_length:
+            overflow = total - measure_length
+            if normalized[m]:
+                ch_last, d_last = normalized[m][-1]
+                if d_last > overflow:
+                    normalized[m][-1] = (ch_last, d_last - overflow)
+
+    # Merge if requested
+    if merge_same_chords and key:
+        merged = {}
+        for m, chords in normalized.items():
+            out = {}
+            for c, dur in chords:
+                try:
+                    rn = roman.romanNumeralFromChord(c, key)
+                    fig = rn.figure
+                    out[fig] = out.get(fig, 0) + dur
+                except:
+                    continue
+            merged[m] = [(fig, dur) for fig, dur in out.items()]
+        return merged
+
+    return normalized
+
+
+def analyze_chord_progression(chords_by_measure, key):
     """
     Analyze chord progression and detect:
     - V not resolving to I
     - Modal mixture chords (borrowed from parallel key)
     - Deceptive cadences (V → vi)
+    
+    Expects: chords_by_measure: Dict[int, List[Tuple[Chord, float]]]
+    Returns: List[Tuple[int, str]] (measure number, issue description)
     """
     issues = []
     prev_rn = None
-
     parallel_key = key.parallel
-    for c in chords:
-        if not c.pitches:
-            continue
-        try:
-            rn = roman.romanNumeralFromChord(c, key)
-            p_rn = roman.romanNumeralFromChord(c, parallel_key)
-        except:
-            continue
 
-        m = int(c.measureNumber) if hasattr(c, 'measureNumber') else int(c.offset)
-
-        # --- V should resolve to I ---
-        if prev_rn and prev_rn.figure.startswith("V"):
-            if rn.figure != "I":
-                if rn.figure == "vi":
-                    issues.append((m, f"deceptive cadence: V → vi"))
-                else:
-                    issues.append((m, f"V does not resolve to I (found {rn.figure})"))
-
-        # --- Modal mixture (if chord fits better in parallel key) ---
-        if p_rn.figure not in ('I', 'V') and p_rn.figure != rn.figure:
-            # Avoid falsely triggering on same-name chords
-            if p_rn.romanNumeral == rn.romanNumeral:
+    for m in sorted(chords_by_measure.keys()):
+        for c, _ in chords_by_measure[m]:
+            if not c.pitches:
                 continue
-            if p_rn.root().name != rn.root().name:
-                issues.append((m, f"modal mixture: {p_rn.figure} (parallel key)"))
 
-        prev_rn = rn
+            try:
+                rn = roman.romanNumeralFromChord(c, key)
+                p_rn = roman.romanNumeralFromChord(c, parallel_key)
+            except:
+                continue
+
+            # --- V should resolve to I ---
+            if prev_rn and prev_rn.figure.startswith("V"):
+                if rn.figure != "I":
+                    if rn.figure == "vi":
+                        issues.append((m, f"deceptive cadence: V → vi"))
+                    else:
+                        issues.append((m, f"V does not resolve to I (found {rn.figure})"))
+
+            # --- Modal mixture (if fits better in parallel key) ---
+            if p_rn.figure not in ('I', 'V') and p_rn.figure != rn.figure:
+                if p_rn.romanNumeral != rn.romanNumeral and p_rn.root().name != rn.root().name:
+                    issues.append((m, f"modal mixture: {p_rn.figure} (parallel key)"))
+
+            prev_rn = rn
 
     return issues
 

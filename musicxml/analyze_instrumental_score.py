@@ -1,6 +1,7 @@
 from music21 import converter, note, pitch, interval, roman
 from common.harmony_utils import detect_key, get_chords, analyze_chord_progression
 from common.html_report import render_html_report
+from common.part_utils import classify_parts
 
 instrument_ranges = {
     'Flute': ('C4', 'C7'),
@@ -42,27 +43,29 @@ def analyze_multistaff_harmony(part, instrument_name, issues_by_measure):
             except:
                 continue
 
-def analyze_instrumental(filepath, use_full_score_chords=False):
+def analyze_instrumental(filepath, use_full_score_chords=False, exclude_piano=True):
     score = converter.parse(filepath)
     key = detect_key(score)
     chords = get_chords(score, use_full_score=use_full_score_chords)
     progression_issues = analyze_chord_progression(chords, key)
 
     issues_by_measure = {}
-    chords_by_measure = {}
+    chords_by_measure = get_chords(score, use_full_score=True, merge_same_chords=True, key=key)
     part_names = []
 
     # Build chords by measure
-    for c in chords:
-        try:
-            rn = roman.romanNumeralFromChord(c, key)
-            m = int(c.measureNumber) if hasattr(c, 'measureNumber') else int(c.offset)
-            chords_by_measure.setdefault(m, []).append(rn.figure)
-        except:
-            continue
+    for m in chords_by_measure:
+        for c, dur in chords_by_measure[m]:
+            try:
+                rn = roman.romanNumeralFromChord(c, key)
+                m = int(c.measureNumber) if hasattr(c, 'measureNumber') else int(c.offset)
+                chords_by_measure.setdefault(m, []).append((rn.figure, dur))
+            except:
+                continue
 
     # Filter out vocal parts
-    instrumental_parts = [p for p in score.parts if get_instrument_name(p) not in VOCAL_PART_NAMES]
+    # instrumental_parts = [p for p in score.parts if get_instrument_name(p) not in VOCAL_PART_NAMES]
+    vocal_parts, instrumental_parts = classify_parts(score, exclude_piano)
 
     if not instrumental_parts:
         print("No instrumental parts found.")

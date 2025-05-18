@@ -177,7 +177,7 @@ def main():
     args = parser.parse_args()
 
     app_name = get_app_name(args.input_dir)
-    output_file = args.output_file or f"{app_name}_summary_{args.summary}.md"
+    output_file = "report/" + (args.output_file or f"{app_name}_summary_{args.summary}.md")
 
     ignore_patterns = load_gitignore_patterns(args.input_dir)
     structure = get_folder_structure(args.input_dir, ignore_patterns) if args.include_structure else None

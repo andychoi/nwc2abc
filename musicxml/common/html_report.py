@@ -1,7 +1,7 @@
 # common/html_report.py
 
 from common.abc_utils import pitch_to_abc
-from music21 import roman, pitch as m21pitch, key as m21key
+from music21 import roman, pitch as m21pitch, key as m21key, chord
 import html
 
 default_key = m21key.Key('C')
@@ -78,6 +78,18 @@ html_template = """<!DOCTYPE html>
 </body>
 </html>"""
 
+from fractions import Fraction
+
+def duration_to_abc_suffix(duration):
+    """Convert duration (in quarterLength) to ABC notation suffix (e.g. 0.5 → '/2', 2.0 → '8')"""
+    f = Fraction(duration).limit_denominator(16)
+    num, denom = f.numerator, f.denominator
+    if denom == 1:
+        return str(num * 4) if num > 1 else ""
+    elif num == 1:
+        return f"/{denom // 1}" if denom in [2, 4, 8, 16] else ""
+    else:
+        return ""  # Simplify, or support dotted notes if needed
 
 def classify_issue(issue_text):
     it = issue_text.lower()
@@ -121,27 +133,57 @@ def recommend_fix(issue_text):
 
 
 def render_html_report(issues_by_measure, part_names, output_path, chords_by_measure=None, abc_key=None):
+    # ── Dedupe identical issue strings per measure/part ──
+    for m, parts in issues_by_measure.items():
+        for part, issues in parts.items():
+            # keep only the first occurrence of each issue text
+            seen = set()
+            deduped = []
+            for txt in issues:
+                if txt not in seen:
+                    seen.add(txt)
+                    deduped.append(txt)
+            issues_by_measure[m][part] = deduped
+            
     # Build columns and rows
     columns_html = ''.join(f'<th>{part}</th>' for part in part_names)
     rows_html = []
     all_abc = []
 
-    for m in sorted(issues_by_measure.keys()):
+    all_measures = set(issues_by_measure.keys())
+    if chords_by_measure:
+        all_measures.update(chords_by_measure.keys())
+
+    for m in sorted(all_measures):
         chords = chords_by_measure.get(m, []) if chords_by_measure else []
-        if isinstance(chords, str): chords = [chords]
-        labels = ", ".join(chords)
+        labels = ", ".join(
+            roman.romanNumeralFromChord(c[0], abc_key).figure if isinstance(c, tuple) else str(c)
+            for c in chords if isinstance(c[0], chord.Chord) and c[0].pitches
+        )
+
         data_abc = ""
         if abc_key and chords:
             parts = []
-            for rn in chords:
+            for c in chords:
                 try:
-                    obj = roman.RomanNumeral(rn, abc_key)
+                    if isinstance(c, tuple):
+                        rn_fig, duration = c
+                    else:
+                        rn_fig, duration = c, 1.0
+
+                    print(f"[DEBUG] Rendering RomanNumeral {rn_fig} in key {abc_key}")
+                    obj = roman.RomanNumeral(rn_fig, abc_key)
                     pitches = [pitch_to_abc(p, abc_key) for p in obj.pitches]
-                    parts.append(f'"{rn}" [{" ".join(pitches)}]')
+                    
+                    # print(f"Measure {m}, Chord {rn_fig}: duration = {duration}")
+                    dur = duration_to_abc_suffix(duration)
+
+                    parts.append(f'"{rn_fig}" [{" ".join(pitches)}]{dur}')
                 except:
-                    parts.append(f'"{rn}" z')
+                    parts.append('"?" z')
             data_abc = " ".join(parts)
             all_abc.append(data_abc)
+
         hover_div = f'<div class="abc-hover" data-abc="{html.escape(data_abc)}">{labels}</div>' if labels else ''
 
         cells = [f'<td>{m}</td>', f'<td>{hover_div}</td>']
@@ -150,7 +192,10 @@ def render_html_report(issues_by_measure, part_names, output_path, chords_by_mea
             if not issues:
                 cells.append('<td class="ok">✓</td>')
             else:
-                inner = ''.join(f'<div class="note-issue {classify_issue(i)}"><b>{i}</b><small>{recommend_fix(i)}</small></div>' for i in issues)
+                inner = ''.join(
+                    f'<div class="note-issue {classify_issue(i)}"><b>{i}</b><small>{recommend_fix(i)}</small></div>'
+                    for i in issues
+                )
                 cells.append(f'<td>{inner}</td>')
         rows_html.append('<tr>' + ''.join(cells) + '</tr>')
 
@@ -159,6 +204,7 @@ def render_html_report(issues_by_measure, part_names, output_path, chords_by_mea
         rows="\n".join(rows_html),
         abc_preview="\n".join(all_abc)
     )
+
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(full_html)
 
