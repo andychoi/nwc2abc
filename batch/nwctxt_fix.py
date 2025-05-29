@@ -159,14 +159,21 @@ def infer_staff_roles(content: str, return_details=False) -> Tuple[Dict[int, str
     extras = base_roles & VCF
 
     postfix = ""
+    
     if {"Soprano", "Alto", "Tenor", "Bass"} <= voices_set:
         postfix = "SATB4_P" if piano_set else "SATB4"
     elif {"SA", "TB"} <= voices_set:
         postfix = "SATB2_P" if piano_set else "SATB2"
     elif voices_set:
-        postfix = "SATB_P" if piano_set else "SATB"
+        if len(voices_set) >= 2:
+            postfix = "SATB_P" if piano_set else "SATB"
+        else:
+            postfix = list(voices_set)[0]
+            if piano_set:
+                postfix += "_P"
     elif piano_set:
         postfix = "P"
+
     if extras:
         postfix += "_" + "".join(sorted(e[0] for e in extras))
 
@@ -269,7 +276,7 @@ if __name__ == "__main__":
     target = Path(sys.argv[1])
     do_rename = "--no-rename" not in sys.argv
     is_test = "--test" in sys.argv
-    alt_patch = None
+    alt_patch = "alt1" 
     for arg in sys.argv[2:]:
         if arg.startswith("--alt="):
             alt_patch = arg.split("=", 1)[1]

@@ -3,10 +3,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Configuration
 TOOL_PATH = Path(__file__).resolve().parent
-NWC_SOURCE_DIR = "nwcoriginal"
-OUTPUT_ROOT_DIR = Path("./converted")
+DEFAULT_INPUT = "nwcoriginal"
+DEFAULT_OUTPUT = Path("./converted")
 
 STEP_TITLES = {
     "1": "🎼 Step 1: Converting .nwc → .nwctxt",
@@ -26,6 +25,8 @@ def show_steps():
         print(f"{key}. {STEP_TITLES[key]}")
     print("\n💡 To run all steps:   python convert_all.py --steps all")
     print("💡 To run some steps:  python convert_all.py --steps 135")
+    print("💡 Use --input to specify the starting folder for Step 1 (e.g. .nwc)")
+    print("💡 --outdir is used to store .nwctxt, .musicxml, and .abc results")
 
 
 def run_command(cmd, shell=False):
@@ -38,17 +39,17 @@ def run_command(cmd, shell=False):
 
 def main():
     parser = argparse.ArgumentParser(description="Run music conversion pipeline steps.")
-    parser.add_argument("--nwcdir", default=NWC_SOURCE_DIR)
-    parser.add_argument("--outdir", default=OUTPUT_ROOT_DIR)
+    parser.add_argument("--input", default=DEFAULT_INPUT, help="Initial input folder (e.g. .nwc or preprocessed)")
+    parser.add_argument("--outdir", default=DEFAULT_OUTPUT, help="Output root folder (intermediate + final results)")
     parser.add_argument("--steps", default="", help="Steps to run (e.g., 135 or 'all')")
     parser.add_argument("--force", action="store_true", help="Force reprocessing")
     args = parser.parse_args()
 
-    nwc_dir = Path(args.nwcdir).expanduser().resolve()
+    input_dir = Path(args.input).expanduser().resolve()
     output_root = Path(args.outdir).expanduser().resolve()
 
-    nwctxt_dir = nwc_dir
-    nwctxt_fixed_dir = Path(f"{nwctxt_dir}-fixed").resolve()
+    nwctxt_dir = output_root / "nwctxt"
+    nwctxt_fixed_dir = output_root / "nwctxt-fixed"
     musicxml_dir = output_root / "musicxml"
 
     steps = args.steps.lower()
@@ -63,7 +64,7 @@ def main():
         print(f"\n{STEP_TITLES['1']}")
         cmd = [
             "python", str(TOOL_PATH / "nwc2nwctxt.py"),
-            str(nwc_dir),
+            str(input_dir),
             str(nwctxt_dir)
         ]
         if args.force:
