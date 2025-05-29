@@ -60,7 +60,7 @@ This toolkit provides a reliable multi-stage pipeline to convert Noteworthy Comp
 python fix-korean.py nwctxt
 ```
 
-📂 Creates `nwctxt-utf8` by default (or use your own target folder):
+📂 Creates `nwctxt-fixed` by default (or use your own target folder):
 
 ```bash
 python fix-korean.py nwctxt fixed-nwctxt --force
@@ -71,13 +71,13 @@ python fix-korean.py nwctxt fixed-nwctxt --force
 ### 3️⃣ Convert `.nwctxt` → `.musicxml`
 
 ```powershell
-.\nwctxt2musicxml.ps1 "nwctxt-utf8"
+.\nwctxt2musicxml.ps1 "nwctxt-fixed"
 ```
 
 👉 Add `-Force` to overwrite outdated `.musicxml`:
 
 ```powershell
-.\nwctxt2musicxml.ps1 "nwctxt-utf8" -Force
+.\nwctxt2musicxml.ps1 "nwctxt-fixed" -Force
 ```
 
 ---

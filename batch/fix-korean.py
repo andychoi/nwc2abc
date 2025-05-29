@@ -106,13 +106,13 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Recover Korean text from mojibake .nwctxt files.")
     parser.add_argument("source", help="Source folder with .nwctxt files")
-    parser.add_argument("destination", nargs="?", help="Destination folder (default: <source>-utf8)")
+    parser.add_argument("destination", nargs="?", help="Destination folder (default: <source>-fixed)")
     parser.add_argument("--force", action="store_true", help="Force overwrite even if target is newer")
 
     args = parser.parse_args()
 
     dest_folder = args.destination
     if not dest_folder:
-        dest_folder = f"{args.source}-utf8"
+        dest_folder = f"{args.source}-fixed"
 
     process_folder(args.source, dest_folder, force=args.force)
