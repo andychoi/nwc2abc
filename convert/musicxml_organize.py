@@ -2,28 +2,37 @@
 import argparse
 import shutil
 import sys
+import re
 from pathlib import Path
 from music21 import converter
-import re
 
-def sanitize_composer(name: str) -> str:
-    name = name.lower()
-    name = re.sub(r'[._]', ' ', name)
-    name = re.sub(r'[\\/:*?"<>|]', '', name)
-    name = re.sub(r'\s+', ' ', name).strip()
-    if not name:
-        name = 'unknown'
-    # Title-case each word
-    name = ' '.join(word.capitalize() for word in name.split())
-    return name
+# Add path to use infer_staff_roles
+from nwctxt_fix import infer_staff_roles
 
-def extract_composer(path: Path) -> str:
+def detect_layout_postfix(xml_path: Path) -> str:
     try:
-        score = converter.parse(str(path))
-        composer = (score.metadata.composer or '').strip()
-        return sanitize_composer(composer)
-    except Exception:
-        return 'Unknown'
+        # Convert to nwctxt-like format string from MusicXML
+        score = converter.parse(str(xml_path))
+        lines = []
+        for part in score.parts:
+            part_id = part.id if hasattr(part, 'id') else ""
+            part_name = part.partName or ""
+            clef = part.getElementsByClass('Clef')[0].sign if part.getElementsByClass('Clef') else ""
+            brace = 'Piano' in (part_name or '').lower()
+            lines.append(f'|AddStaff|Name:"{part_name}"')
+            lines.append(f'|Label:"{part_name}"')
+            lines.append(f'|Clef|Type:{clef}')
+            if brace:
+                lines.append('|StaffProperties|Brace')
+            # Fake instrument patch
+            lines.append(f'|StaffInstrument|Patch:0')
+
+        content = "\n".join(lines)
+        _, postfix, *_ = infer_staff_roles(content)
+        return postfix or "Unknown"
+    except Exception as e:
+        print(f"⚠️  Failed to infer layout from {xml_path.name}: {e}")
+        return "Unknown"
 
 def organize_musicxml(root_path: Path, output_path: Path):
     print(f"\n📂 Organizing .musicxml files from:\n  {root_path}")
@@ -40,21 +49,20 @@ def organize_musicxml(root_path: Path, output_path: Path):
 
     for file in files:
         try:
-            composer = extract_composer(file)
-            target_dir = output_path / composer
+            layout = detect_layout_postfix(file)
+            target_dir = output_path / layout
             target_dir.mkdir(parents=True, exist_ok=True)
             dest_path = target_dir / file.name
             if file.resolve() != dest_path.resolve():
-                print(f"📦 Moving '{file.name}' → '{composer}/'")
+                print(f"📦 Moving '{file.name}' → '{layout}/'")
                 shutil.move(str(file), str(dest_path))
         except Exception as e:
             print(f"⚠️  Error processing '{file}': {e}")
 
     print("\n✅ Organization complete.")
 
-
 def main():
-    parser = argparse.ArgumentParser(description="Organize .musicxml files by composer metadata.")
+    parser = argparse.ArgumentParser(description="Organize .musicxml files by vocal/instrument layout.")
     parser.add_argument("RootFolder", help="Root folder containing .musicxml files")
     parser.add_argument("OutputFolder", nargs="?", help="Optional output folder (default: RootFolder)")
     args = parser.parse_args()
@@ -70,7 +78,6 @@ def main():
     )
 
     organize_musicxml(root_path, output_path)
-
 
 if __name__ == "__main__":
     main()

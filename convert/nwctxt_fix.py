@@ -83,6 +83,8 @@ def classify_by_keyword(name: str, clef: str = "", brace: bool = False) -> str:
         return "Piano-RH"
     return ""
 
+# ... [keep original import and global constants unchanged] ...
+
 def infer_staff_roles(content: str, return_details=False) -> Tuple[Dict[int, str], str, List[str], List[str], List[str], List[str]]:
     lines = content.splitlines()
     blocks = parse_staff_blocks(lines)
@@ -161,12 +163,12 @@ def infer_staff_roles(content: str, return_details=False) -> Tuple[Dict[int, str
     postfix = ""
     
     if {"Soprano", "Alto", "Tenor", "Bass"} <= voices_set:
-        postfix = "SATB4_P" if piano_set else "SATB4"
+        postfix = "SATB_P" if piano_set else "SATB"
     elif {"SA", "TB"} <= voices_set:
-        postfix = "SATB2_P" if piano_set else "SATB2"
+        postfix = "SA_TB_P" if piano_set else "SA_TB"
     elif voices_set:
         if len(voices_set) >= 2:
-            postfix = "SATB_P" if piano_set else "SATB"
+            postfix = "Choral_P" if piano_set else "Choral"
         else:
             postfix = list(voices_set)[0]
             if piano_set:
@@ -219,8 +221,8 @@ def rename_file_with_postfix(file: Path, postfix: str) -> Path:
 
 def process_folder(folder: Path, rename: bool = True, test_mode: bool = False, alt_patch: str = None):
     if not folder.exists():
-        print(f"❌ Folder not found: {folder}")
-        sys.exit(1)
+        print(f"📁 Creating missing folder: {folder}")
+        folder.mkdir(parents=True, exist_ok=True)
     files = list(folder.glob("*.nwctxt"))
     if not files:
         print(f"⚠️  No .nwctxt files found in {folder}")
