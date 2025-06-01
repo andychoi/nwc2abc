@@ -1,0 +1,5 @@
+torch>=1.12.0
+music21>=6.1.0
+matplotlib>=3.5.0
+tqdm>=4.64.0
+numpy>=1.21.0

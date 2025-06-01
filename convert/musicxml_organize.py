@@ -1,4 +1,4 @@
-# musicxml_organize.py
+# convert/musicxml_organize.py
 import argparse
 import shutil
 import sys

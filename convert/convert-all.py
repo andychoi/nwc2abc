@@ -9,7 +9,7 @@ DEFAULT_OUTPUT = Path("./converted")
 
 STEP_TITLES = {
     "1": "🎼 Step 1: Converting .nwc → .nwctxt",
-    "2": "🛠️  Step 2: Fixing Korean mojibake in .nwctxt → .nwctxt-fixed",
+    "2": "🛠️ Step 2: Fixing Korean mojibake in .nwctxt → .nwctxt-fixed",
     "3": "🧪 Step 3: Applying general fixes to .nwctxt",
     "4": "🎶 Step 4: Converting .nwctxt → .musicxml",
     "5": "🧹 Step 5: Organizing .musicxml by layout",

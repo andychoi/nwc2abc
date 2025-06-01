@@ -1,5 +1,5 @@
 
-#!/usr/bin/env python3
+# convert/nwctxt_fix.py
 import re
 import sys
 from pathlib import Path
@@ -219,14 +219,16 @@ def rename_file_with_postfix(file: Path, postfix: str) -> Path:
         print(f"✅ Name unchanged: {file.name}")
     return new_path
 
-def process_folder(folder: Path, rename: bool = True, test_mode: bool = False, alt_patch: str = None):
+def process_folder(folder: Path, rename: bool = True, test_mode: bool = False, alt_patch: str = None, organize: bool = True):
     if not folder.exists():
         print(f"📁 Creating missing folder: {folder}")
         folder.mkdir(parents=True, exist_ok=True)
+
     files = list(folder.glob("*.nwctxt"))
     if not files:
         print(f"⚠️  No .nwctxt files found in {folder}")
         return
+
     for file in files:
         try:
             content = file.read_text(encoding="utf-8", errors="replace")
@@ -234,52 +236,58 @@ def process_folder(folder: Path, rename: bool = True, test_mode: bool = False, a
 
             if test_mode:
                 print(f"\n🔍 Simulating: {file.name}")
-
                 for i, role in role_map.items():
-                    name = names[i]
-                    label = labels[i]
-                    clef = clefs[i]
-                    instr = instruments[i]
-                    
-                    # Parse original patch number
+                    name, label, clef, instr = names[i], labels[i], clefs[i], instruments[i]
                     patch_num = int(instr.split(":")[1]) if instr.startswith("Patch:") else None
                     patch_name = GM_PATCH_NAMES.get(patch_num, "Unknown") if patch_num is not None else "-"
-
-                    # Get target patch (if alt patching is active)
-                    target_patch = None
-                    target_patch_name = "-"
-                    if alt_patch and role in ALT_PATCHES.get(alt_patch, {}):
-                        target_patch = ALT_PATCHES[alt_patch][role]
-                        target_patch_name = GM_PATCH_NAMES.get(target_patch, "Unknown")
-
-                    # Show both original and converted MIDI instrument names
-                    if target_patch is not None and patch_num != target_patch:
+                    target_patch = ALT_PATCHES.get(alt_patch, {}).get(role)
+                    target_patch_name = GM_PATCH_NAMES.get(target_patch, "Unknown") if target_patch else "-"
+                    if target_patch and patch_num != target_patch:
                         patch_display = f"{instr} ({patch_name}) → Patch:{target_patch} ({target_patch_name})"
                     else:
                         patch_display = f"{instr} ({patch_name})"
-
-                    print(f"  STAFF {i}: {name} / {label} / {clef} / {patch_display} → {role} ({abbreviate_label(role)})")                
+                    print(f"  STAFF {i}: {name} / {label} / {clef} / {patch_display} → {role} ({abbreviate_label(role)})")
                 continue
 
             updated = apply_updates(content, role_map, alt_patch)
             file.write_text(updated, encoding="utf-8")
 
+            # Optionally rename
             if rename and postfix:
-                rename_file_with_postfix(file, postfix)
+                file = rename_file_with_postfix(file, postfix)
             else:
                 print(f"✅ Updated (no renaming): {file.name}")
+
+            # Optionally organize into subfolders
+            if organize and postfix:
+                target_dir = folder / postfix
+                target_dir.mkdir(exist_ok=True)
+                target_path = target_dir / file.name
+                if file.resolve() != target_path.resolve():
+                    print(f"📦 Moving '{file.name}' → '{postfix}/'")
+                    file.replace(target_path)
+
         except Exception as e:
             print(f"❌ Error processing {file.name}: {e}")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python nwctxt_fix.py <folder_path> [--no-rename] [--test] [--alt=alt1|alt2]")
+        print("Usage: python nwctxt_fix.py <folder_path> [--no-rename] [--no-organize] [--test] [--alt=alt1|alt2]")
         sys.exit(1)
+
     target = Path(sys.argv[1])
     do_rename = "--no-rename" not in sys.argv
     is_test = "--test" in sys.argv
-    alt_patch = "alt1" 
+    do_organize = "--no-organize" not in sys.argv
+    alt_patch = "alt1"
     for arg in sys.argv[2:]:
         if arg.startswith("--alt="):
             alt_patch = arg.split("=", 1)[1]
-    process_folder(target, rename=do_rename, test_mode=is_test, alt_patch=alt_patch)
+
+    process_folder(
+        target,
+        rename=do_rename,
+        test_mode=is_test,
+        alt_patch=alt_patch,
+        organize=do_organize
+    )
