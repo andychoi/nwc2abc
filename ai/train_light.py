@@ -1,5 +1,7 @@
-# ai/train.py
-
+# ai/train_light.py
+"""
+    4 layers, d_model=256
+"""
 import argparse
 from pathlib import Path
 from typing import List
@@ -14,11 +16,11 @@ from music21 import converter, stream, key as m21key, interval, meter
 import matplotlib.pyplot as plt
 
 from remi_tokenizer import REMIABCTokenizer  # updated tokenizer
-from relative_transformer import RelativeTransformerDecoder
+
 
 # === Model definition ===
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=4096):
+    def __init__(self, d_model, max_len=2048):
         super().__init__()
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len).unsqueeze(1)
@@ -30,73 +32,27 @@ class PositionalEncoding(nn.Module):
     def forward(self, x):
         return x + self.pe[:, : x.size(1)]
 
+
 class DecoderOnlyMusicGenModel(nn.Module):
-    """
-    Even if you keep a single‐stage model, you can add a small “chord head” on top of the transformer’s 
-    hidden states at bar boundaries. During training, you force it to predict the next bar’s chord.
-    In your training loop:
-
-    1. Collect chord_positions:
-        - While tokenizing each C‐transposed score, record the indices of every <BarStart> that’s immediately followed by <Chord_...> in the token stream.
-        - Create a tensor of shape (batch, n_bars) containing those indices.
-
-    2. Compute two losses:
-        - token_loss: cross‐entropy over next‐token at each position.
-        - chord_loss: cross‐entropy between chord_logits[i, j, :] and the ground‐truth chord ID at bar j + 1.
-
-    3. Combine them: loss = token_loss + λ * chord_loss (e.g. λ = 0.5).
-
-    """
-    def __init__(
-        self,
-        vocab_size: int,
-        d_model: int = 512,
-        nhead: int = 8,
-        num_layers: int = 12,
-        dim_feedforward: int = 2048,
-        dropout: float = 0.1,
-        max_rel_dist: int = 1024,
-    ):
+    def __init__(self, vocab_size, d_model=256, nhead=4, num_layers=4, dropout=0.1):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, d_model)
-        self.positional = PositionalEncoding(d_model, max_len=4096)
-
-        self.decoder = RelativeTransformerDecoder( ... )
+        self.positional = PositionalEncoding(d_model)
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model, nhead, dropout=dropout, batch_first=True
+        )
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers)
         self.fc_out = nn.Linear(d_model, vocab_size)
 
-        # Chord vocabulary: a separate small embedding & linear
-        self.chord_vocab_size = len([tok for tok in tokenizer.vocab if tok.startswith("<Chord_")])
-        self.chord_indices = {
-            tok: idx for idx, tok in enumerate(tokenizer.vocab) if tok.startswith("<Chord_")
-        }
-        self.chord_head = nn.Linear(d_model, self.chord_vocab_size)
-
-    def forward(self, x, chord_positions=None):
-        """
-        chord_positions: a list of token‐indices at which <BarStart> occurs.
-        We'll extract the hidden state at those positions to predict the next chord.
-        """
-        emb = self.embedding(x)
+    def forward(self, x):
+        emb = self.embedding(x)  # (batch, seq_len, d_model)
         emb = self.positional(emb)
+        # causal mask: each position can attend only to itself and prior positions
         tgt_mask = torch.triu(torch.ones(x.size(1), x.size(1), device=x.device), 1).bool()
-        hidden = self.decoder(emb, tgt_mask=tgt_mask)  # (batch, seq_len, d_model)
-        logits = self.fc_out(hidden)                  # (batch, seq_len, vocab_size)
+        memory = torch.zeros_like(emb)  # dummy memory
+        out = self.decoder(emb, memory, tgt_mask=tgt_mask)
+        return self.fc_out(out)  # (batch, seq_len, vocab_size)
 
-        # If chord_positions is provided, we compute chord_logits:
-        chord_logits = None
-        if chord_positions is not None:
-            # hidden_at_bar = hidden[:, chord_positions, :]  # gather at each bar boundary
-            gathered = []
-            for i, positions in enumerate(chord_positions):
-                # positions: list of indices (e.g., [3, 10, 17, ...])
-                # We want hidden[i, pos, :]
-                gathered.append(hidden[i, positions, :])        # tensor (n_bars, d_model)
-            # Pad to max bars, or stack if uniform length
-            # For simplicity, assume each batch sample has the same number of bars:
-            hidden_at_bar = torch.stack(gathered, dim=0)       # (batch, n_bars, d_model)
-            chord_logits = self.chord_head(hidden_at_bar)      # (batch, n_bars, chord_vocab_size)
-
-        return logits, chord_logits
 
 # === Dataset, with transposition to C ===
 class MusicREMI_Dataset(Dataset):
