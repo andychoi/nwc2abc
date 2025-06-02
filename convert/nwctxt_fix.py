@@ -224,7 +224,9 @@ def process_folder(folder: Path, rename: bool = True, test_mode: bool = False, a
         print(f"📁 Creating missing folder: {folder}")
         folder.mkdir(parents=True, exist_ok=True)
 
-    files = list(folder.glob("*.nwctxt"))
+    # Exclude any file in _duplicates subfolder
+    files = [f for f in folder.rglob("*.nwctxt") if "_duplicates" not in f.parts]
+
     if not files:
         print(f"⚠️  No .nwctxt files found in {folder}")
         return
@@ -252,13 +254,11 @@ def process_folder(folder: Path, rename: bool = True, test_mode: bool = False, a
             updated = apply_updates(content, role_map, alt_patch)
             file.write_text(updated, encoding="utf-8")
 
-            # Optionally rename
             if rename and postfix:
                 file = rename_file_with_postfix(file, postfix)
             else:
                 print(f"✅ Updated (no renaming): {file.name}")
 
-            # Optionally organize into subfolders
             if organize and postfix:
                 target_dir = folder / postfix
                 target_dir.mkdir(exist_ok=True)
@@ -269,6 +269,7 @@ def process_folder(folder: Path, rename: bool = True, test_mode: bool = False, a
 
         except Exception as e:
             print(f"❌ Error processing {file.name}: {e}")
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:

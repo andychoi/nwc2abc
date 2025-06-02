@@ -5,6 +5,8 @@
 # ai/bar_planner.py
 
 import torch.nn as nn
+import torch
+from relative_transformer import PositionalEncoding
 
 class BarPlannerModel(nn.Module):
     """
@@ -35,6 +37,9 @@ class BarPlannerModel(nn.Module):
 # ai/detail_generator.py
 
 import torch.nn as nn
+import torch
+from relative_transformer import PositionalEncoding, PositionalEncoding
+
 
 class DetailGeneratorModel(nn.Module):
     """
@@ -94,12 +99,12 @@ python eval.py examples/melody.abc \
 
 import argparse
 from pathlib import Path
-
 import torch
+from music21 import converter, stream, metadata, instrument, key as m21key, interval, meter
+
 from remi_tokenizer import REMIABCTokenizer
 from remi_detokenizer import remi_tokens_to_score
 from train import DecoderOnlyMusicGenModel
-from music21 import converter, stream, metadata, instrument, key as m21key, interval, meter
 
 
 def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float("Inf")):

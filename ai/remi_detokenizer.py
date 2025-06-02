@@ -1,40 +1,36 @@
-# ai/remi_detokenizer.py
-
-from music21 import stream, note, tempo, meter, duration, volume, instrument, key as m21key
+from music21 import stream, note, tempo, meter, duration, volume, instrument, key as m21key, key
 from typing import List
 
 
 def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
     """
-    Convert a REMI token list (including <Style=...>, <time=...>, <key=...>, <Tempo=...>,
-    <PhraseStart>, <Chord_...>, <voice=...>, <BarStart>, <RelPos_n>, <Dynamic_x>,
-    <Note-On_midi>, <Duration_n>, <Velocity_v>) into a multi-part music21 Score.
+    Convert REMI tokens into a multi‐part music21.Score, now including:
+      • <key_change=TONICmode> → insert a new KeySignature at the current offset
+    All other behaviors remain as before.
     """
     s = stream.Score()
-    # Default tempo; will override if <Tempo=...> appears
     s.insert(0, tempo.MetronomeMark(number=120))
 
-    # Parse global tokens (<Style>, <time>, <key>, <Tempo>) before any <voice=>
     idx = 0
     ts_quarters = 4.0
     ticks_per_beat = 4
     bar_quarters = ts_quarters
 
+    # 1) First parse global tokens until the first <voice=…>
     while idx < len(tokens):
         tok = tokens[idx]
-
         if tok == "<BOS>":
             idx += 1
             continue
 
-        # Style token (no direct mapping to music21 Score, ignore)
+        # Style: ignore
         if tok.startswith("<Style=") and tok.endswith(">"):
             idx += 1
             continue
 
         # Time signature
         if tok.startswith("<time=") and tok.endswith(">"):
-            ts_val = tok[len("<time="):-1]  # e.g. "3/4"
+            ts_val = tok[len("<time="):-1]
             num, den = ts_val.split("/")
             ts_obj = meter.TimeSignature(f"{num}/{den}")
             s.insert(0, ts_obj)
@@ -43,9 +39,9 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
             idx += 1
             continue
 
-        # Key signature
+        # Key signature (initial)
         if tok.startswith("<key=") and tok.endswith(">"):
-            key_val = tok[len("<key="):-1]  # e.g. "Cmaj" or "Gmin"
+            key_val = tok[len("<key="):-1]
             if key_val.endswith("maj"):
                 tonic = key_val[:-3]
                 ks = m21key.Key(tonic + "major")
@@ -66,22 +62,40 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
             idx += 1
             continue
 
-        # Once we hit <voice=>, global parsing is done
-        if tok.startswith("<voice="):
-            break
-
-        # Ignore <PhraseStart>, <Chord_...> at global level
-        if tok == "<PhraseStart>" or tok.startswith("<Chord_"):
+        # PhraseStart: ignore at global level
+        if tok == "<PhraseStart>":
             idx += 1
             continue
 
+        # If we hit a <key_change=> before any <voice>, insert a new KeySignature at offset 0
+        if tok.startswith("<key_change=") and tok.endswith(">"):
+            new_key = tok[len("<key_change="):-1]
+            if new_key.endswith("maj"):
+                tonic = new_key[:-3]
+                ks2 = key.Key(tonic + "major")
+            else:
+                tonic = new_key[:-3]
+                ks2 = key.Key(tonic + "minor")
+            s.insert(0, ks2)
+            idx += 1
+            continue
+
+        # Once we see a <voice=>, global parsing ends
+        if tok.startswith("<voice="):
+            break
+
+        # Ignore any mid‐piece <Chord_…> here
+        if tok.startswith("<Chord_"):
+            idx += 1
+            continue
+
+        # Anything else at global: skip
         idx += 1
 
-    # Prepare to collect Parts
+    # 2) Now parse per‐voice blocks
     parts = []
     current_part = None
 
-    # Per-part state (reset on each <voice=>)
     current_offset_quarters = 0.0
     current_offset_ticks = 0
     last_offset_ticks = 0
@@ -89,15 +103,14 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
     current_velocity = 64
     dynamic_velocity_map = {"pp": 32, "p": 48, "mp": 56, "mf": 72, "f": 88, "ff": 112, "sfz": 100}
 
-    def finalize_part(part_obj: stream.Part):
-        if part_obj is not None:
-            parts.append(part_obj)
+    def finalize_part(p):
+        if p is not None:
+            parts.append(p)
 
-    # Iterate through remaining tokens
     while idx < len(tokens):
         tok = tokens[idx]
 
-        # New voice block
+        # New voice
         if tok.startswith("<voice=") and tok.endswith(">"):
             finalize_part(current_part)
             voice_label = tok[len("<voice="):-1]
@@ -128,7 +141,7 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
             idx += 1
             continue
 
-        # Skip tokens until a voice is found
+        # If no part yet, skip
         if current_part is None:
             idx += 1
             continue
@@ -141,7 +154,20 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
             idx += 1
             continue
 
-        # RelPos: advance relative ticks
+        # key_change mid‐piece within a part: insert new KeySignature at current_offset
+        if tok.startswith("<key_change=") and tok.endswith(">"):
+            new_key = tok[len("<key_change="):-1]
+            if new_key.endswith("maj"):
+                tonic = new_key[:-3]
+                ks2 = key.Key(tonic + "major")
+            else:
+                tonic = new_key[:-3]
+                ks2 = key.Key(tonic + "minor")
+            s.insert(current_offset_quarters, ks2)
+            idx += 1
+            continue
+
+        # RelPos
         if tok.startswith("<RelPos_") and tok.endswith(">"):
             try:
                 rel = int(tok[len("<RelPos_"):-1])
@@ -153,7 +179,7 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
             idx += 1
             continue
 
-        # Dynamic: set velocity mapping
+        # Dynamic
         if tok.startswith("<Dynamic_") and tok.endswith(">"):
             dyn_val = tok[len("<Dynamic_"):-1]
             current_velocity = dynamic_velocity_map.get(dyn_val, current_velocity)
@@ -170,7 +196,7 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
             idx += 1
             continue
 
-        # Duration: set current duration
+        # Duration
         if tok.startswith("<Duration_") and tok.endswith(">"):
             try:
                 dur_ticks = int(tok[len("<Duration_"):-1])
@@ -180,7 +206,7 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
             idx += 1
             continue
 
-        # Note-On or Rest: create note/rest event
+        # Note-On or Rest
         if tok.startswith("<Note-On_") and tok.endswith(">"):
             try:
                 midi_val = int(tok[len("<Note-On_"):-1])
@@ -200,7 +226,7 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
             idx += 1
             continue
 
-        # Ignore chord annotations
+        # Ignore chord annotations (already used in tokenization)
         if tok.startswith("<Chord_"):
             idx += 1
             continue
@@ -213,9 +239,9 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
         # Anything else: skip
         idx += 1
 
-    # Finalize last part
+    # Finalize final part
     finalize_part(current_part)
-    # Insert all parts into the Score
     for i, part in enumerate(parts):
         s.insert(i, part)
+
     return s
