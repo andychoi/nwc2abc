@@ -1,4 +1,4 @@
-# eval_analysis_tool.py
+# ai/eval_analysis_tool.py
 import argparse
 from pathlib import Path
 from music21 import converter, roman, interval, stream, chord

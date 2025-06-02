@@ -1,4 +1,4 @@
-# train.py
+# ai/train.py
 import argparse
 import torch
 import torch.nn as nn
@@ -57,7 +57,6 @@ def tokenize_part(part, part_name: str) -> str:
     tokens = [f"<part={part_name}>"]
     for n in part.flat.notesAndRests:
         dur = int(n.quarterLength * 4)
-
         if n.isRest:
             tokens.append(f"z{dur}")
         elif n.isChord:
@@ -101,7 +100,6 @@ class MusicDataset(Dataset):
     def __init__(self, tokenizer, scores, augment=True):
         self.samples = []
         self.tokenizer = tokenizer
-
         for score in scores:
             score = transpose_to_c(score)
             for part in score.parts:
@@ -164,6 +162,7 @@ def main():
     parser.add_argument('--device', type=str, default=default_device)
     parser.add_argument('--input', type=str, required=True, help="Path to input folder containing ABC files")
     parser.add_argument('--augment', action="store_true", help="Enable key transposition augmentation")
+    parser.add_argument('--model-name', type=str, default="musicgen_model.pt", help="Optional name for the saved model file")
     args = parser.parse_args()
 
     scores = extract_parts_from_folder(args.input)
@@ -189,7 +188,7 @@ def main():
 
     plot_loss(all_losses)
 
-    save_path = Path("musicgen_model.pt")
+    save_path = Path(args.model_name)
     torch.save({
         'model_state_dict': model.state_dict(),
         'vocab': tokenizer.vocab
