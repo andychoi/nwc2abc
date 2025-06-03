@@ -16,7 +16,7 @@ from music21 import converter, stream, key as m21key, interval, meter
 import matplotlib.pyplot as plt
 
 from remi_tokenizer import REMIABCTokenizer
-from ai.relative_transformer import RelativeTransformerDecoder  # your relative‐attention decoder
+from relative_transformer import RelativeTransformerDecoder  # your relative‐attention decoder
 from remi_detokenizer import remi_tokens_to_score  # not used here, but for completeness
 
 
