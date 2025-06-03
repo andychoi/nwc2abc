@@ -1,5 +1,5 @@
 from music21 import stream, note, tempo, meter, duration, volume, instrument, key as m21key, key
-from typing import List
+from typing import List, Tuple
 
 
 def remi_tokens_to_score(tokens: List[str]) -> stream.Score:

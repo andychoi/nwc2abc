@@ -702,43 +702,39 @@ class RelativeTransformerDecoder(nn.Module):
 
 ## `remi_detokenizer.py`
 ```python
-# ai/remi_detokenizer.py
-
-from music21 import stream, note, tempo, meter, duration, volume, instrument, key as m21key
+from music21 import stream, note, tempo, meter, duration, volume, instrument, key as m21key, key
 from typing import List
 
 
 def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
     """
-    Convert a REMI token list (including <Style=...>, <time=...>, <key=...>, <Tempo=...>,
-    <PhraseStart>, <Chord_...>, <voice=...>, <BarStart>, <RelPos_n>, <Dynamic_x>,
-    <Note-On_midi>, <Duration_n>, <Velocity_v>) into a multi-part music21 Score.
+    Convert REMI tokens into a multi‐part music21.Score, now including:
+      • <key_change=TONICmode> → insert a new KeySignature at the current offset
+    All other behaviors remain as before.
     """
     s = stream.Score()
-    # Default tempo; will override if <Tempo=...> appears
     s.insert(0, tempo.MetronomeMark(number=120))
 
-    # Parse global tokens (<Style>, <time>, <key>, <Tempo>) before any <voice=>
     idx = 0
     ts_quarters = 4.0
     ticks_per_beat = 4
     bar_quarters = ts_quarters
 
+    # 1) First parse global tokens until the first <voice=…>
     while idx < len(tokens):
         tok = tokens[idx]
-
         if tok == "<BOS>":
             idx += 1
             continue
 
-        # Style token (no direct mapping to music21 Score, ignore)
+        # Style: ignore
         if tok.startswith("<Style=") and tok.endswith(">"):
             idx += 1
             continue
 
         # Time signature
         if tok.startswith("<time=") and tok.endswith(">"):
-            ts_val = tok[len("<time="):-1]  # e.g. "3/4"
+            ts_val = tok[len("<time="):-1]
             num, den = ts_val.split("/")
             ts_obj = meter.TimeSignature(f"{num}/{den}")
             s.insert(0, ts_obj)
@@ -747,9 +743,9 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
             idx += 1
             continue
 
-        # Key signature
+        # Key signature (initial)
         if tok.startswith("<key=") and tok.endswith(">"):
-            key_val = tok[len("<key="):-1]  # e.g. "Cmaj" or "Gmin"
+            key_val = tok[len("<key="):-1]
             if key_val.endswith("maj"):
                 tonic = key_val[:-3]
                 ks = m21key.Key(tonic + "major")
@@ -770,22 +766,40 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
             idx += 1
             continue
 
-        # Once we hit <voice=>, global parsing is done
-        if tok.startswith("<voice="):
-            break
-
-        # Ignore <PhraseStart>, <Chord_...> at global level
-        if tok == "<PhraseStart>" or tok.startswith("<Chord_"):
+        # PhraseStart: ignore at global level
+        if tok == "<PhraseStart>":
             idx += 1
             continue
 
+        # If we hit a <key_change=> before any <voice>, insert a new KeySignature at offset 0
+        if tok.startswith("<key_change=") and tok.endswith(">"):
+            new_key = tok[len("<key_change="):-1]
+            if new_key.endswith("maj"):
+                tonic = new_key[:-3]
+                ks2 = key.Key(tonic + "major")
+            else:
+                tonic = new_key[:-3]
+                ks2 = key.Key(tonic + "minor")
+            s.insert(0, ks2)
+            idx += 1
+            continue
+
+        # Once we see a <voice=>, global parsing ends
+        if tok.startswith("<voice="):
+            break
+
+        # Ignore any mid‐piece <Chord_…> here
+        if tok.startswith("<Chord_"):
+            idx += 1
+            continue
+
+        # Anything else at global: skip
         idx += 1
 
-    # Prepare to collect Parts
+    # 2) Now parse per‐voice blocks
     parts = []
     current_part = None
 
-    # Per-part state (reset on each <voice=>)
     current_offset_quarters = 0.0
     current_offset_ticks = 0
     last_offset_ticks = 0
@@ -793,15 +807,14 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
     current_velocity = 64
     dynamic_velocity_map = {"pp": 32, "p": 48, "mp": 56, "mf": 72, "f": 88, "ff": 112, "sfz": 100}
 
-    def finalize_part(part_obj: stream.Part):
-        if part_obj is not None:
-            parts.append(part_obj)
+    def finalize_part(p):
+        if p is not None:
+            parts.append(p)
 
-    # Iterate through remaining tokens
     while idx < len(tokens):
         tok = tokens[idx]
 
-        # New voice block
+        # New voice
         if tok.startswith("<voice=") and tok.endswith(">"):
             finalize_part(current_part)
             voice_label = tok[len("<voice="):-1]
@@ -832,7 +845,7 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
             idx += 1
             continue
 
-        # Skip tokens until a voice is found
+        # If no part yet, skip
         if current_part is None:
             idx += 1
             continue
@@ -845,7 +858,20 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
             idx += 1
             continue
 
-        # RelPos: advance relative ticks
+        # key_change mid‐piece within a part: insert new KeySignature at current_offset
+        if tok.startswith("<key_change=") and tok.endswith(">"):
+            new_key = tok[len("<key_change="):-1]
+            if new_key.endswith("maj"):
+                tonic = new_key[:-3]
+                ks2 = key.Key(tonic + "major")
+            else:
+                tonic = new_key[:-3]
+                ks2 = key.Key(tonic + "minor")
+            s.insert(current_offset_quarters, ks2)
+            idx += 1
+            continue
+
+        # RelPos
         if tok.startswith("<RelPos_") and tok.endswith(">"):
             try:
                 rel = int(tok[len("<RelPos_"):-1])
@@ -857,7 +883,7 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
             idx += 1
             continue
 
-        # Dynamic: set velocity mapping
+        # Dynamic
         if tok.startswith("<Dynamic_") and tok.endswith(">"):
             dyn_val = tok[len("<Dynamic_"):-1]
             current_velocity = dynamic_velocity_map.get(dyn_val, current_velocity)
@@ -874,7 +900,7 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
             idx += 1
             continue
 
-        # Duration: set current duration
+        # Duration
         if tok.startswith("<Duration_") and tok.endswith(">"):
             try:
                 dur_ticks = int(tok[len("<Duration_"):-1])
@@ -884,7 +910,7 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
             idx += 1
             continue
 
-        # Note-On or Rest: create note/rest event
+        # Note-On or Rest
         if tok.startswith("<Note-On_") and tok.endswith(">"):
             try:
                 midi_val = int(tok[len("<Note-On_"):-1])
@@ -904,7 +930,7 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
             idx += 1
             continue
 
-        # Ignore chord annotations
+        # Ignore chord annotations (already used in tokenization)
         if tok.startswith("<Chord_"):
             idx += 1
             continue
@@ -917,11 +943,11 @@ def remi_tokens_to_score(tokens: List[str]) -> stream.Score:
         # Anything else: skip
         idx += 1
 
-    # Finalize last part
+    # Finalize final part
     finalize_part(current_part)
-    # Insert all parts into the Score
     for i, part in enumerate(parts):
         s.insert(i, part)
+
     return s
 
 ```
@@ -1010,6 +1036,34 @@ class REMIABCTokenizer:
         # <BarStart>, <PhraseStart> already in __init__
         # Voice, time, key, tempo, chord, style tokens added dynamically during tokenization
 
+    def _collect_key_events(self, original_score: stream.Score) -> List[Tuple[float, str]]:
+        """
+        Scan the original (un‐transposed) score for KeySignature changes.
+        Return a list of (offset_in_quarterLength, "TONICmode") sorted by offset.
+        """
+        events: List[Tuple[float, str]] = []
+        # music21 often represents each key change as a KeySignature object at some offset.
+        for ks in original_score.recurse().getElementsByClass(KeySignature):
+            offset_q = ks.measureNumber * ks.barDuration.quarterLength - ks.barDuration.quarterLength
+            # (measureNumber is 1‐based; measureNumber*barLength - barLength == offset of that measure start)
+            # But if measureNumber isn't set, fallback to ks.offset:
+            if ks.offset is not None:
+                offset_q = ks.offset
+
+            try:
+                new_key = ks.asKey()  # yields a Key object (tonic+mode)
+                tonic = new_key.tonic.name  # e.g., "G"
+                mode = "maj" if new_key.mode == "major" else "min"
+                events.append((offset_q, f"{tonic}{mode}"))
+            except Exception:
+                # fallback: if we can't convert to a Key, skip
+                continue
+
+        # Sort by offset
+        events.sort(key=lambda x: x[0])
+        return events
+
+
     def extract_chords_by_beat(self, score: stream.Score, tokens: List[str]):
         """
         Extract multiple chord tokens per bar from the score using:
@@ -1075,32 +1129,125 @@ class REMIABCTokenizer:
     def tokenize(self, s: stream.Score) -> List[str]:
         """
         Convert a music21 Score into a list of REMI tokens, including:
-          1. <BOS>
-          2. <Style=...>
-          3. <time=num/den>
-          4. <key=<tonic><mode>>
-          5. <Tempo=nnn>
-          6. <PhraseStart>
-          7. Multiple chord tokens per bar via extract_chords_by_beat
-          8. For each part:
-               a. <voice=LABEL>
-               b. Events: <BarStart>, <RelPos_n>, <Dynamic_x>, <Note-On>, <Duration_n>, <Velocity_v>
-          9. <EOS>
+        1.  Record all <key_change=…> events from s_orig.
+        2.  Build a copy of s_orig, transpose each measure‐block to C (maj/min).
+        3.  Emit:
+            <BOS>
+            <Style=…>
+            <time=num/den>
+            <key=Cmaj/min>         ← now always C since we've normalized
+            <Tempo=…>
+            <PhraseStart>
+            <key_change=…> …       ← one token per mid‐piece key event
+            per‐bar chord tokens via extract_chords_by_beat(on the normalized score)
+            per‐part: <voice=…>, <BarStart>, <RelPos_…>, <Dynamic_…>, <Note-On_…>, <Duration_…>, <Velocity_…>
+            <EOS>
         """
+        # 1) Gather all key‐change events from the *original* score:
+        key_events = self._collect_key_events(s_orig)  # list of (offset_q, "Gmaj"), etc.
+
+        # 2) Now, create a *fully transposed copy* of s_orig → s_norm in C
+        #    We do a per‐section transposition so that each key‐section is transposed appropriately.
+        #    Simplest: assume key signature changes only at measure boundaries. We iterate measure by measure.
+        s_norm = stream.Score()
+        s_norm.metadata = s_orig.metadata  # carry over metadata (style, etc.)
+
+        # Extract the time signature and bar length once
+        ts_obj = s_orig.recurse().getElementsByClass(meter.TimeSignature).first() or meter.TimeSignature("4/4")
+        bar_length = ts_obj.barDuration.quarterLength
+
+        # Build a list of (measure_index, KeySignature) sorted by measure start
+        ks_list = [(ks.measureNumber, ks) for ks in s_orig.recurse().getElementsByClass(KeySignature)]
+        ks_list.sort(key=lambda x: x[0])  # measureNumber ascending
+
+        # If no explicit KeySignature, infer global key from analysis:
+        if not ks_list:
+            try:
+                global_k = s_orig.analyze("key")
+                ks0 = KeySignature(global_k.sharps)
+                ks_list = [(1, ks0)]
+            except Exception:
+                ks_list = [(1, KeySignature(0))]  # default C
+
+        # Now iterate measure by measure:
+        all_parts = s_orig.parts
+        for part in all_parts:
+            # Create a matching part in s_norm
+            p_norm = part.clone()  # deep copy notes/rests, but we'll re‐transpose
+            p_norm.flat.notesAndRests.stream()  # ensure flat structure
+            s_norm.insert(0, p_norm)  # timing will be overwritten by transposition below
+
+        # We build a lookup table: for each measure number, find the KeySignature in effect.
+        # Then transpose all notes in that measure to C/(A) depending on major/minor.
+        key_by_measure = {}
+        for meas_num, ks in ks_list:
+            k = ks.asKey()
+            key_by_measure[meas_num] = k
+
+        # If no explicit KeySignature for a given measure, assume carry‐over previous:
+        # Build a list of measureNumbers in ascending order:
+        all_measure_numbers = sorted(key_by_measure.keys())
+        # For measures not in key_by_measure, fill with last seen
+        max_meas = int(s_orig.highestOffset // bar_length) + 1
+        last_key = None
+        for m_idx in range(1, max_meas + 1):
+            if m_idx in key_by_measure:
+                last_key = key_by_measure[m_idx]
+                key_by_measure[m_idx] = last_key
+            else:
+                key_by_measure[m_idx] = last_key or m21key.Key("C")  # default C
+
+        # Now copy part by part, measure by measure:
+        for part_idx, part in enumerate(all_parts):
+            new_part = stream.Part()
+            new_part.id = part.id
+            new_part.partName = part.partName
+
+            # For each measure, collect notes/rests, transpose to C/A relative to that measure's key
+            for m_idx in range(1, max_meas + 1):
+                this_key = key_by_measure[m_idx]
+                # Determine target: if this_key.mode == "major", target = C; else A minor
+                if this_key.mode == "major":
+                    tgt_key = m21key.Key("C")
+                else:
+                    tgt_key = m21key.Key("A", "minor")
+
+                iv = m21key.interval.Interval(this_key.tonic, tgt_key.tonic)
+
+                # Extract the measure from original
+                m_orig = part.measure(m_idx)
+                if m_orig is None:
+                    continue
+
+                # Clone measure, transpose its contents
+                m_copy = m_orig.clone()
+                m_copy.transpose(iv, inPlace=True)
+                # Append to new_part at offset = (m_idx - 1) * bar_length
+                for el in m_copy.flat.notesAndRests:
+                    new_el = el.clone()
+                    new_el.offset = (m_idx - 1) * bar_length + el.offset
+                    new_part.insert(new_el.offset, new_el)
+
+            s_norm.insert(0, new_part)
+
+        # From here on, work exclusively with s_norm (everything is now in C)
+        # but we still keep key_events (from the original) as metadata.
+
+        # 3) Begin tokenization
         tokens: List[str] = []
         tokens.append("<BOS>")
 
-        # 1) Style token
-        style = getattr(s.metadata, "style", None) or "Unknown"
+        # 3a) Style
+        style = getattr(s_orig.metadata, "style", None) or "Unknown"
         style_tok = f"<Style={style}>"
         self._add_token(style_tok)
         tokens.append(style_tok)
 
-        # 2) Build base vocab before adding new tokens
+        # 3b) Build base vocab
         self.build_base_vocab()
 
-        # 3) Time signature
-        ts = s.recurse().getElementsByClass(meter.TimeSignature).first()
+        # 3c) Time signature (first)
+        ts = s_norm.recurse().getElementsByClass(meter.TimeSignature).first()
         if ts:
             ts_tok = f"<time={ts.numerator}/{ts.denominator}>"
             ts_quarters = ts.barDuration.quarterLength
@@ -1110,19 +1257,25 @@ class REMIABCTokenizer:
         self._add_token(ts_tok)
         tokens.append(ts_tok)
 
-        # 4) Key signature (analyzed)
+        # 3d) Key signature (normalized—should always be C!)
+        #     We only emit the *initial* <key=> here.  Mid‐piece changes get <key_change=…>.
+        #     So compute the *first* global key of s_orig, but then show it as “Cmaj” or “Amin”.
         try:
-            k = s.analyze("key")
-            tonic = k.tonic.name    # e.g., "C"
-            mode = "maj" if k.mode == "major" else "min"
-            key_tok = f"<key={tonic}{mode}>"
+            init_orig_key = s_orig.analyze("key")
+            init_mode = "maj" if init_orig_key.mode == "major" else "min"
+            # After normalization, the first key is always C (or A) depending on init_mode,
+            # but we want the model to learn that “initial key = Cmaj” if it was major, or Cmin if minor.
+            if init_orig_key.mode == "major":
+                key_tok = "<key=Cmaj>"
+            else:
+                key_tok = "<key=Amin>"
         except Exception:
             key_tok = "<key=Cmaj>"
         self._add_token(key_tok)
         tokens.append(key_tok)
 
-        # 5) Tempo token (first MetronomeMark or default 120)
-        mm = s.recurse().getElementsByClass(tempo.MetronomeMark).first()
+        # 3e) Tempo (first or default)
+        mm = s_norm.recurse().getElementsByClass(tempo.MetronomeMark).first()
         if mm:
             tempo_tok = f"<Tempo={int(mm.number)}>"
         else:
@@ -1130,17 +1283,25 @@ class REMIABCTokenizer:
         self._add_token(tempo_tok)
         tokens.append(tempo_tok)
 
-        # 6) Phrase start
+        # 3f) PhraseStart
         tokens.append("<PhraseStart>")
 
-        # 7) Extract multiple chord tokens per bar
-        self.extract_chords_by_beat(s, tokens)
+        # 3g) Emit *all* mid‐piece key‐change tokens (in chronological order)
+        #     Note: key_events is a list of (offset_q, "Gmaj"), … from the original
+        for _, new_key_str in key_events:
+            # Skip the very first if it matches the initial key
+            if new_key_str.lower().startswith("cmaj") or new_key_str.lower().startswith("amin"):
+                continue
+            change_tok = f"<key_change={new_key_str}>"
+            self._add_token(change_tok)
+            tokens.append(change_tok)
 
-        # 8) For each part, add voice tag and encode events
+        # 4) Chord tokens (per‐bar, on the normalized score s_norm)
+        self.extract_chords_by_beat(s_norm, tokens)
+
+        # 5) For each part in s_norm, emit <voice=…> + events
         ticks_per_measure = int(ts_quarters * self.ticks_per_beat)
-
-        for part in s.parts:
-            # Determine a clean voice label (S1/S2 → S)
+        for part in s_norm.parts:
             raw_label = (part.partName or part.id or "UNK").strip()
             lu = raw_label.upper()
             if "S2" in lu or "S1" in lu or "SOP" in lu:
@@ -1165,37 +1326,35 @@ class REMIABCTokenizer:
             self._add_token(voice_tok)
             tokens.append(voice_tok)
 
-            # Iterate through notes/rests in offset order
             last_ticks = 0
             current_bar_index = 0
 
             for n in part.flat.notesAndRests:
-                # 8a) Check if we've crossed into a new bar
+                # 5a) Bar boundary?
                 bar_idx = int((n.offset * self.ticks_per_beat) // ticks_per_measure)
                 if bar_idx > current_bar_index:
                     current_bar_index = bar_idx
                     tokens.append("<BarStart>")
 
-                # 8b) Compute relative position in ticks
+                # 5b) Relative position (in ticks since last event)
                 curr_ticks = int(n.offset * self.ticks_per_beat)
                 rel = curr_ticks - last_ticks
-                # Clamp rel to [0, ticks_per_measure - 1]
                 rel = max(0, min(rel, ticks_per_measure - 1))
                 rel_tok = f"<RelPos_{rel}>"
                 self._add_token(rel_tok)
                 tokens.append(rel_tok)
                 last_ticks = curr_ticks
 
-                # 8c) Dynamic token if present
+                # 5c) Dynamics if present
                 for expr in n.expressions:
                     if isinstance(expr, m21dynamics.Dynamic):
-                        dyn_val = expr.value  # e.g., "p", "mf"
+                        dyn_val = expr.value  # e.g. "p", "mf"
                         dyn_tok = f"<Dynamic_{dyn_val}>"
                         self._add_token(dyn_tok)
                         tokens.append(dyn_tok)
                         break
 
-                # 8d) Note-On or Rest
+                # 5d) Note‐On / Rest
                 if isinstance(n, note.Note):
                     note_tok = f"<Note-On_{n.pitch.midi}>"
                     tokens.append(note_tok)
@@ -1205,20 +1364,21 @@ class REMIABCTokenizer:
                 else:  # Rest
                     tokens.append("<Note-On_0>")
 
-                # 8e) Duration
+                # 5e) Duration (clamped)
                 dur_ticks = int(min(n.quarterLength * self.ticks_per_beat, self.max_duration))
                 dur_tok = f"<Duration_{dur_ticks}>"
                 tokens.append(dur_tok)
 
-                # 8f) Velocity
+                # 5f) Velocity
                 vel = getattr(n.volume, "velocity", 64)
                 vel_bin = int(np.clip(vel, 0, 127) // 8 * 8)
                 vel_tok = f"<Velocity_{vel_bin}>"
                 tokens.append(vel_tok)
 
-        # 9) End-of-sequence
+        # 6) EOS
         tokens.append("<EOS>")
         return tokens
+
 
     def encode(self, tokens: List[str]) -> List[int]:
         """

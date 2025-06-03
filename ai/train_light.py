@@ -4,7 +4,7 @@
 """
 import argparse
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 import torch
 import torch.nn as nn

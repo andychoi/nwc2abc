@@ -2,7 +2,7 @@
 
 from music21 import stream, note, chord, meter, tempo, key as m21key, roman, harmony
 from music21 import dynamics as m21dynamics
-from typing import List
+from typing import List, Tuple
 import numpy as np
 
 
